@@ -1,22 +1,54 @@
 # Skyhook
 
-Skyhook is a lightweight CLI for generating repository orientation maps for coding agents.
+Skyhook builds a small, readable map of a repository and uses that map to create task-specific route packs for coding agents.
 
-It is not a full semantic index, vector database, or search replacement. It is a fast wayfinding layer: scan the repo, identify the important code and documentation structure, and write compact artifacts that help an agent decide where to read next.
+It is not a vector database, code search engine, or full semantic index. It is a fast wayfinding layer. The output should tell an agent where to start reading, which docs matter, which tests are likely relevant, and which parts of the repo are probably involved in the current task.
 
-## Why
+## The Problem
 
-Large agent sessions waste time rediscovering the same things:
+Large repositories burn time and tokens before useful work starts. A new agent session often has to rediscover the same things:
 
-- where the app entrypoints are
-- which directories own which domains
-- where ADRs, C4 diagrams, architecture docs, and design docs live
-- which README or agent instructions should be read first
-- which files are likely relevant before opening a PR
+- where the main entrypoints are
+- which directories own which features or domains
+- where architecture docs, ADRs, C4 diagrams, and design notes live
+- which tests matter for a change
+- which files are likely edit targets for a bug, review, or implementation task
+- what local conventions are worth reading before touching code
 
-Skyhook turns that into a small set of generated files agents can read quickly.
-It also creates task-specific route packs so an agent can start with the
-smallest useful slice of context for the current issue.
+Normal search helps after you know what to search for. A full index can help too, but it is heavier than many teams need and can still bury the starting point in too much detail. Skyhook is intentionally smaller. It produces a compact map that agents can read before they open a broad set of files.
+
+## How Skyhook Solves It
+
+`skyhook init` scans the repository and writes generated orientation artifacts under `.skyhook/`.
+
+The important artifacts are:
+
+- `.skyhook/INDEX.md`: short entrypoint for agents
+- `.skyhook/map.md`: full generated overview
+- `.skyhook/map.json`: canonical machine-readable map
+- `.skyhook/docs.md`: documentation inventory
+- `.skyhook/architecture.md`: architecture and design references
+- `.skyhook/tests.md`: discovered tests and verification hints
+- `.skyhook/areas/<area>.md`: focused notes for detected code areas
+
+`skyhook route` takes a task, issue, review note, or bug report and builds a smaller route pack from the map. Route packs are shaped by profile:
+
+- `product_planning`
+- `requirements_planning`
+- `technical_breakdown`
+- `implementation`
+- `code_review`
+- `bug_hunt`
+
+The route pack is the part an agent should read for a specific job. The map is the durable repo orientation.
+
+## Why It Works This Way
+
+Skyhook favors generated files over a service because agents and humans can inspect the output, commit it if they want, diff it in review, and use it on local machines or CI runners without extra infrastructure.
+
+The map is navigational by design. It should be good enough to point to the right code and docs quickly. It should not try to list every symbol or replace a developer reading the files that matter.
+
+Model usage is optional. With an OpenAI-compatible provider, Skyhook can produce better summaries. Without a key, static mode still produces deterministic output from filenames, docs, symbols, imports, tests, and repository structure.
 
 ## Install
 
@@ -26,36 +58,24 @@ From a checkout:
 python3 -m pip install -e .
 ```
 
+From another repository or a remote runner:
+
+```sh
+python3 -m pip install "git+https://github.com/KalebKE/Skyhook.git"
+```
+
 Run without installing:
 
 ```sh
 python3 -m skyhook --help
 ```
 
-## Commands
+## First Run
 
-### `skyhook init`
-
-Run this when introducing Skyhook to a repo:
+From the repository you want to map:
 
 ```sh
 skyhook init
-```
-
-It writes:
-
-- `.skyhook/INDEX.md`
-- `.skyhook/map.md`
-- `.skyhook/map.json`
-- `.skyhook/docs.md`
-- `.skyhook/architecture.md`
-- `.skyhook/tests.md`
-- `.skyhook/areas/<area>.md`
-
-Use a model when `OPENAI_API_KEY` is set:
-
-```sh
-OPENAI_API_KEY=... skyhook init --provider openai
 ```
 
 Use deterministic offline mode:
@@ -64,82 +84,13 @@ Use deterministic offline mode:
 skyhook init --provider static
 ```
 
-### `skyhook route`
-
-Run this when an agent has a task or issue body and needs the shortest useful
-path into the repository:
+Use a model when an API key is available:
 
 ```sh
-skyhook route --task "add retry handling to sync failures"
+OPENAI_API_KEY=... skyhook init --provider openai
 ```
 
-It reads `.skyhook/map.json` and prints a compact route pack with:
-
-- files and docs to read first
-- likely edit targets
-- relevant tests
-- architecture and design references
-- constraints, gotchas, and search terms
-- evidence explaining why each item was selected
-
-Choose a route profile for the kind of work:
-
-```sh
-skyhook route --profile technical_breakdown --task-file issue.md
-skyhook route --profile code_review --task-file pr-notes.md
-skyhook route --profile bug_hunt --task "diagnose empty dashboard cards"
-```
-
-Built-in profiles:
-
-- `product_planning`
-- `requirements_planning`
-- `technical_breakdown`
-- `implementation`
-- `code_review`
-- `bug_hunt`
-
-Use an issue file:
-
-```sh
-skyhook route --task-file issue.md
-```
-
-Emit JSON for harnesses:
-
-```sh
-skyhook route --task-file issue.md --format json
-```
-
-Persist the route under `.skyhook/routes/`:
-
-```sh
-skyhook route --task-file issue.md --save
-```
-
-### `skyhook check`
-
-Use this in CI:
-
-```sh
-skyhook check
-```
-
-It validates required artifacts and fails if `.skyhook/map.json` is stale relative to the current scan digest.
-
-## Model Provider
-
-Skyhook supports an OpenAI-compatible chat completions endpoint through the Python standard library.
-
-Environment variables:
-
-- `OPENAI_API_KEY` or `SKYHOOK_API_KEY`
-- `OPENAI_BASE_URL` or `SKYHOOK_BASE_URL`
-- `SKYHOOK_MODEL`
-
-Default model: `gpt-4.1-mini`.
-
-If no API key is available and provider is `auto`, Skyhook uses the static fallback so the CLI remains usable in local and CI environments.
+After this, point agents at `.skyhook/INDEX.md` first. For task-specific work, use `skyhook route`.
 
 ## Configuration
 
@@ -171,38 +122,128 @@ docs:
     - "**/*C4*.md"
 ```
 
-The current implementation uses a small YAML subset so Skyhook does not require PyYAML.
+The YAML parser intentionally supports a small subset. Skyhook does not require PyYAML.
 
-## Output Model
+Use `include` to keep the scan focused in monorepos. Use `exclude` for generated output, dependency directories, build artifacts, and large local worktrees.
 
-`map.json` is the canonical artifact. Markdown files are rendered from the same structure.
+## Model Provider
 
-Top-level sections:
+Skyhook supports an OpenAI-compatible chat completions endpoint through the Python standard library.
 
-- `repo`
-- `scan`
-- `orientation`
-- `codeAreas`
-- `docs`
-- `architecture`
-- `symbols`
-- `tests`
+Environment variables:
 
-The data model is intentionally navigational. It should point agents to the right code and docs, not list every symbol in a repository.
-Code areas may also include responsibilities, public contracts, dependencies,
-relevant tests, verification commands, change rules, danger zones, common task
-patterns, and evidence.
+- `OPENAI_API_KEY` or `SKYHOOK_API_KEY`
+- `OPENAI_BASE_URL` or `SKYHOOK_BASE_URL`
+- `SKYHOOK_MODEL`
 
-## Generated Layers
+Default model: `gpt-4.1-mini`.
 
-The generated markdown is intentionally layered:
+If no API key is available and provider is `auto`, Skyhook uses static mode.
 
-- `INDEX.md` is the compact entrypoint for agents.
-- `map.md` is the full generated overview.
-- `areas/<area>.md` contains focused subsystem context.
-- `tests.md` captures discovered tests and verification hints.
-- `docs.md` and `architecture.md` point agents to durable project intent.
-- `routes/<hash>.md` is created only when `skyhook route --save` is used.
+## Commands
+
+### `skyhook init`
+
+Generate or refresh the map:
+
+```sh
+skyhook init
+```
+
+Preview whether output would change:
+
+```sh
+skyhook init --provider static --dry-run
+```
+
+### `skyhook route`
+
+Route a task through the map:
+
+```sh
+skyhook route --task "add retry handling to sync failures"
+```
+
+Use a task file:
+
+```sh
+skyhook route --profile implementation --task-file issue.md
+```
+
+Use a profile that matches the work:
+
+```sh
+skyhook route --profile technical_breakdown --task-file issue.md
+skyhook route --profile code_review --task-file pr-notes.md
+skyhook route --profile bug_hunt --task "diagnose empty dashboard cards"
+```
+
+Emit JSON for a harness:
+
+```sh
+skyhook route --task-file issue.md --format json
+```
+
+Persist the route under `.skyhook/routes/`:
+
+```sh
+skyhook route --task-file issue.md --save
+```
+
+### `skyhook check`
+
+Use this when `.skyhook/` artifacts are committed and you want CI to catch stale maps:
+
+```sh
+skyhook check
+```
+
+`check` fails when `.skyhook/map.json` does not match the current repository scan digest.
+
+## When To Rerun
+
+Run `skyhook init`:
+
+- when adding Skyhook to a repository
+- after large directory moves or module splits
+- after adding or removing major entrypoints
+- after changing important architecture, ADR, design, or testing docs
+- before handing a stale repository to a new agent session
+- before opening a PR if `.skyhook/` artifacts are part of the repo contract
+
+Run `skyhook route` for each meaningful task. A route is task-specific and should not be treated as a permanent repo map.
+
+Run `skyhook check` in CI only if you commit `.skyhook/` artifacts and want freshness enforced.
+
+## CI Example
+
+This example assumes the repository commits `.skyhook/` artifacts and wants pull requests to fail when the map is stale.
+
+```yaml
+name: skyhook
+
+on:
+  pull_request:
+
+jobs:
+  check-map:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -m pip install "git+https://github.com/KalebKE/Skyhook.git"
+      - run: skyhook check
+```
+
+## Relationship To BurnPlan
+
+Skyhook answers: where should an agent start reading for this repo or task?
+
+BurnPlan answers: what does the project want to become, what weak points are emerging, and how should agent teams use the map over time?
+
+Use Skyhook by itself when you only need wayfinding. Add BurnPlan when you want onboarding interviews, code health notes, documentation proposals, and team routing.
 
 ## Development
 
