@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="26 18 48 62">
+  <title>Skyhook — Tractor mark</title>
+  <defs>
+    <filter id="skyhook-tractor-glow" x="-70%" y="-70%" width="240%" height="240%">
+      <feGaussianBlur stdDeviation="1.8" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="skyhook-tractor-beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#28E0D0" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#28E0D0" stop-opacity="0.04"/>
+    </linearGradient>
+  </defs>
+  <rect x="34" y="22" width="32" height="11" rx="3" fill="#1A2A40" stroke="#28E0D0" stroke-width="2.5"/>
+  <circle cx="50" cy="33" r="3.5" fill="#FFC83A"/>
+  <path d="M44 36 L30 72 L70 72 L56 36 Z" fill="url(#skyhook-tractor-beam)"/>
+  <g filter="url(#skyhook-tractor-glow)">
+    <rect x="42" y="60" width="16" height="16" rx="3" fill="none" stroke="#28E0D0" stroke-width="3"/>
+  </g>
+  <line x1="38" y1="50" x2="62" y2="50" stroke="#28E0D0" stroke-width="2" opacity="0.5" stroke-dasharray="3 4"/>
+</svg>

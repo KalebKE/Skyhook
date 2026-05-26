@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/skyhook-tractor.svg" alt="Skyhook tractor" width="180">
+</p>
+
 # Skyhook
 
 Skyhook builds a small, readable map of a repository and uses that map to create task-specific route packs for coding agents.
