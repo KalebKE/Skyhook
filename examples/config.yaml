@@ -1,0 +1,23 @@
+version: 1
+outputDir: .skyhook
+model:
+  provider: auto
+  model: auto
+scan:
+  include:
+    - .
+  exclude:
+    - build
+    - dist
+    - node_modules
+    - .git
+    - .gradle
+    - .sim-worktrees
+  maxFiles: 5000
+docs:
+  extraGlobs:
+    - "docs/**/*.md"
+    - "adr/**/*.md"
+    - "architecture/**/*.md"
+    - "**/*ADR*.md"
+    - "**/*C4*.md"
