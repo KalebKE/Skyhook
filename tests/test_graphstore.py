@@ -46,6 +46,36 @@ class GraphStoreTests(unittest.TestCase):
                 {s["name"] for s in store.symbols_in_file("pkg/a.py")}, {"helper", "foo"}
             )
 
+    def test_build_creates_missing_parent_dir(self):
+        # Fresh worktree scenario: .skyhook/ does not exist yet. build_graph
+        # must create it rather than crash on sqlite3.connect (the shell/Codex
+        # `skyhook graph build` path, which — unlike `skyhook mcp` — never
+        # mkdir'd the output dir before opening the db).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make_repo(tmp)
+            scan = self._scan(root)
+            from skyhook.graphstore import build_graph
+
+            db = root / ".skyhook" / "graph.db"
+            self.assertFalse(db.parent.exists())
+            build_graph(scan, db)  # must not raise
+            self.assertTrue(db.exists())
+            self.assertTrue(db.with_suffix(".json").exists())
+
+    def test_build_can_skip_json_export(self):
+        # Transient builds (mcp / query self-bootstrap) only need graph.db to
+        # serve queries; graph.json is a commit-artifact and must NOT be written
+        # into a worktree that has not adopted Skyhook (would dirty the tree).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make_repo(tmp)
+            scan = self._scan(root)
+            from skyhook.graphstore import build_graph
+
+            db = root / ".skyhook" / "graph.db"
+            build_graph(scan, db, export_json=False)
+            self.assertTrue(db.exists())
+            self.assertFalse(db.with_suffix(".json").exists())
+
     def test_incremental_skips_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _make_repo(tmp)

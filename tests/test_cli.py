@@ -124,6 +124,40 @@ class CliTests(unittest.TestCase):
             self.assertEqual(data["likelyEditTargets"], [])
             self.assertIn("docs/design.md", data["readFirst"])
 
+    def test_graph_query_self_bootstraps_without_dirtying_tree(self):
+        # Pipeline scenario: an agent worktree that has NOT adopted Skyhook
+        # (no committed .skyhook/). `graph query` must build the graph on demand
+        # AND leave the git tree clean — an untracked .skyhook/ would trip the
+        # pipeline's clean-tree exit gate.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            (root / "src").mkdir()
+            (root / "src" / "main.py").write_text("def go():\n    return 1\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+                cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            self.assertFalse((root / ".skyhook").exists())
+
+            real = io.StringIO()
+            with redirect_stdout(real):
+                self.assertEqual(main(["graph", "query", "--repo", str(root), "exists", "src/main.py"]), 0)
+            self.assertIn("True", real.getvalue())
+
+            fake = io.StringIO()
+            with redirect_stdout(fake):
+                self.assertEqual(main(["graph", "query", "--repo", str(root), "exists", "src/nope.py"]), 0)
+            self.assertIn("False", fake.getvalue())
+
+            self.assertTrue((root / ".skyhook" / "graph.db").exists())
+            self.assertFalse((root / ".skyhook" / "graph.json").exists())  # transient: no commit-artifact
+            porcelain = subprocess.run(
+                ["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True
+            ).stdout
+            self.assertEqual(porcelain.strip(), "", f"tree not clean: {porcelain!r}")
+
     def test_route_reads_task_file_and_stdin(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -84,6 +84,11 @@ class GraphStore:
             uri = f"file:{Path(db_path).as_posix()}?mode=ro"
             self.conn = sqlite3.connect(uri, uri=True)
         else:
+            if db_path != ":memory:":
+                # Ensure the output dir (e.g. a fresh .skyhook/) exists before
+                # sqlite tries to create the db file — otherwise connect raises
+                # "unable to open database file" on a never-initialized worktree.
+                Path(db_path).parent.mkdir(parents=True, exist_ok=True)
             self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
@@ -402,8 +407,15 @@ class GraphStore:
         self.conn.close()
 
 
-def build_graph(scan, db_path: Path, full: bool = False, resolve: bool = True) -> Dict[str, int]:
-    """Convenience: open/build/(resolve)/export at ``db_path`` + sibling ``graph.json``."""
+def build_graph(
+    scan, db_path: Path, full: bool = False, resolve: bool = True, export_json: bool = True
+) -> Dict[str, int]:
+    """Convenience: open/build/(resolve)/export at ``db_path`` + sibling ``graph.json``.
+
+    ``export_json=False`` skips the diffable JSON export — used by transient
+    self-bootstrap builds (``skyhook mcp``/``graph query``) that only need the
+    queryable db and must not drop a commit-artifact into an un-adopted tree.
+    """
     store = GraphStore(str(db_path))
     summary = store.build(scan, full=full)
     if resolve:
@@ -413,6 +425,7 @@ def build_graph(scan, db_path: Path, full: bool = False, resolve: bool = True) -
             resolve_calls(store)
         except Exception:
             pass
-    store.export_json(db_path.with_suffix(".json"))
+    if export_json:
+        store.export_json(db_path.with_suffix(".json"))
     store.close()
     return summary

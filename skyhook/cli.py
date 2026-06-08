@@ -133,15 +133,46 @@ def _build_graph_artifacts(scan, out_dir: Path) -> None:
     _ensure_graph_gitignore(out_dir)
 
 
-def _ensure_graph_gitignore(out_dir: Path) -> None:
-    """Gitignore the regenerable binary db; the JSON export is what gets committed."""
+def _ensure_graph_gitignore(out_dir: Path, ignore_all: bool = False) -> None:
+    """Gitignore the regenerable binary db; the JSON export is what gets committed.
+
+    ``ignore_all=True`` is for a transiently-created ``.skyhook/`` in a repo that
+    has not adopted Skyhook: ignore the entire directory (including this
+    ``.gitignore``) so the on-demand graph never shows up in the agent's git
+    tree. Only written when no ``.gitignore`` already exists (an adopted repo
+    keeps its committed one, which ignores just ``graph.db``).
+    """
     gitignore = out_dir / ".gitignore"
+    if ignore_all:
+        if not gitignore.exists():
+            gitignore.write_text("*\n")
+        return
     lines = []
     if gitignore.exists():
         lines = gitignore.read_text().splitlines()
     if "graph.db" not in lines:
         lines.append("graph.db")
         gitignore.write_text("\n".join(lines) + "\n")
+
+
+def _ensure_graph(repo_root: Path, cfg, out_dir: Path) -> Path:
+    """Return a queryable graph.db, building it transiently if absent.
+
+    Used by ``mcp``/``graph query``/``graph stats`` so they work in a fresh
+    worktree without a prior ``skyhook init``. The build is transient: db only
+    (no graph.json commit-artifact), and if we create ``.skyhook/`` ourselves we
+    gitignore the whole thing so the agent's tree stays clean.
+    """
+    db_path = out_dir / "graph.db"
+    if db_path.exists():
+        return db_path
+    fresh = not out_dir.exists()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    from .graphstore import build_graph
+
+    build_graph(scan_repo(repo_root, cfg), db_path, full=True, export_json=False)
+    _ensure_graph_gitignore(out_dir, ignore_all=fresh)
+    return db_path
 
 
 def cmd_graph(args: argparse.Namespace) -> int:
@@ -160,8 +191,7 @@ def cmd_graph(args: argparse.Namespace) -> int:
         store.close()
         return 0
 
-    if not db_path.exists():
-        raise ModelError(f"missing {db_path}. Run `skyhook graph build` first.")
+    db_path = _ensure_graph(repo_root, cfg, out_dir)
     store = GraphStore(str(db_path), read_only=True)
     try:
         if sub == "stats":
@@ -212,15 +242,9 @@ def cmd_bench(args: argparse.Namespace) -> int:
 
 def cmd_mcp(args: argparse.Namespace) -> int:
     repo_root, cfg, out_dir = load_runtime(args)
-    db_path = out_dir / "graph.db"
-    if not db_path.exists():
-        # Self-bootstrap: build the graph so the server works in a fresh worktree
-        # without a prior `skyhook init`/`graph build`.
-        out_dir.mkdir(parents=True, exist_ok=True)
-        from .graphstore import build_graph
-
-        build_graph(scan_repo(repo_root, cfg), db_path, full=True)
-        _ensure_graph_gitignore(out_dir)
+    # Self-bootstrap (transient, tree-clean) so the server works in a fresh
+    # worktree without a prior `skyhook init`/`graph build`.
+    db_path = _ensure_graph(repo_root, cfg, out_dir)
     from .mcp_server import McpUnavailable, serve
 
     try:
