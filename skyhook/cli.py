@@ -25,6 +25,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return cmd_check(args)
         if args.command == "route":
             return cmd_route(args)
+        if args.command == "graph":
+            return cmd_graph(args)
+        if args.command == "mcp":
+            return cmd_mcp(args)
+        if args.command == "bench":
+            return cmd_bench(args)
     except KeyboardInterrupt:
         print("skyhook: interrupted", file=sys.stderr)
         return 130
@@ -56,6 +62,36 @@ def build_parser() -> argparse.ArgumentParser:
     route.add_argument("--profile", default=DEFAULT_PROFILE, help="route profile: " + ", ".join(profile_names()))
     route.add_argument("--format", choices=["markdown", "json"], default="markdown", help="output format")
     route.add_argument("--save", action="store_true", help="write route artifacts under .skyhook/routes")
+
+    graph = sub.add_parser("graph", help="build or query the AST symbol+call graph")
+    gsub = graph.add_subparsers(dest="graph_command")
+
+    gbuild = gsub.add_parser("build", help="build .skyhook/graph.db from source")
+    add_common_args(gbuild, provider=False)
+    gbuild.add_argument("--full", action="store_true", help="rebuild from scratch (default: incremental)")
+
+    gquery = gsub.add_parser("query", help="query the graph")
+    add_common_args(gquery, provider=False)
+    gquery.add_argument(
+        "kind",
+        choices=["defs", "callers", "callees", "blast-radius", "exists", "symbols-in-file", "search"],
+    )
+    gquery.add_argument("arg", help="symbol name, file path, or search text")
+    gquery.add_argument("--json", action="store_true", help="emit JSON")
+    gquery.add_argument("--depth", type=int, default=3, help="blast-radius depth")
+    gquery.add_argument("--strict", action="store_true", help="resolved-only (no candidate matches)")
+
+    gstats = gsub.add_parser("stats", help="graph coverage stats")
+    add_common_args(gstats, provider=False)
+    gstats.add_argument("--json", action="store_true", help="emit JSON")
+
+    mcp = sub.add_parser("mcp", help="run the read-only MCP server over the graph")
+    add_common_args(mcp, provider=False)
+
+    bench = sub.add_parser("bench", help="estimate the token reduction of a graph route pack")
+    add_common_args(bench, provider=False)
+    bench.add_argument("--task", required=True, help="task text to route + measure")
+    bench.add_argument("--profile", default="implementation")
     return parser
 
 
@@ -84,14 +120,174 @@ def cmd_init(args: argparse.Namespace) -> int:
         print_report("init", scan, out_dir, wrote=False, would_change=outputs_would_change(out_dir, data))
         return 0
     write_outputs(out_dir, data)
+    _build_graph_artifacts(scan, out_dir)
     print_report("init", scan, out_dir, wrote=True)
     return 0
+
+
+def _build_graph_artifacts(scan, out_dir: Path) -> None:
+    """Build .skyhook/graph.db (+ diffable graph.json) from an existing scan."""
+    from .graphstore import build_graph
+
+    build_graph(scan, out_dir / "graph.db", full=False)
+    _ensure_graph_gitignore(out_dir)
+
+
+def _ensure_graph_gitignore(out_dir: Path) -> None:
+    """Gitignore the regenerable binary db; the JSON export is what gets committed."""
+    gitignore = out_dir / ".gitignore"
+    lines = []
+    if gitignore.exists():
+        lines = gitignore.read_text().splitlines()
+    if "graph.db" not in lines:
+        lines.append("graph.db")
+        gitignore.write_text("\n".join(lines) + "\n")
+
+
+def cmd_graph(args: argparse.Namespace) -> int:
+    from .graphstore import GraphStore
+
+    repo_root, cfg, out_dir = load_runtime(args)
+    db_path = out_dir / "graph.db"
+    sub = getattr(args, "graph_command", None)
+
+    if sub == "build":
+        scan = scan_repo(repo_root, cfg)
+        _build_graph_artifacts(scan, out_dir)
+        store = GraphStore(str(db_path), read_only=True)
+        print(f"skyhook graph: built {db_path}")
+        print(f"- {store.stats()}")
+        store.close()
+        return 0
+
+    if not db_path.exists():
+        raise ModelError(f"missing {db_path}. Run `skyhook graph build` first.")
+    store = GraphStore(str(db_path), read_only=True)
+    try:
+        if sub == "stats":
+            _emit_graph(store.stats(), args)
+            return 0
+        if sub == "query":
+            _emit_graph(_run_graph_query(store, args), args)
+            return 0
+    finally:
+        store.close()
+    raise ValueError("skyhook graph requires a subcommand: build, query, or stats")
+
+
+def cmd_bench(args: argparse.Namespace) -> int:
+    """Compare a graph-enriched route pack against reading the relevant files."""
+    repo_root, _cfg, out_dir = load_runtime(args)
+    data = load_existing_map(out_dir)
+    if data is None:
+        raise ModelError("run `skyhook init` first")
+    graph = _open_graph(out_dir)
+    try:
+        route = build_route(data, args.task, profile=args.profile, graph=graph)
+    finally:
+        if graph is not None:
+            graph.close()
+    pack_chars = len(canonical_json(route))
+
+    paths = list(route.get("likelyEditTargets", []) or [])
+    if route.get("blastRadius"):
+        paths += route["blastRadius"].get("impactedFiles", []) or []
+    paths = list(dict.fromkeys(p for p in paths if isinstance(p, str)))
+    baseline_chars = 0
+    read = 0
+    for p in paths:
+        fp = repo_root / p
+        if fp.exists() and fp.is_file():
+            baseline_chars += len(fp.read_text(errors="replace"))
+            read += 1
+
+    tok = lambda c: c // 4
+    print(f"task: {args.task}")
+    print(f"graph route pack : {pack_chars:>8} chars  (~{tok(pack_chars)} tokens)  [graph={'on' if graph else 'off'}]")
+    print(f"read-files baseline: {baseline_chars:>8} chars  (~{tok(baseline_chars)} tokens)  over {read} files")
+    if pack_chars and baseline_chars:
+        print(f"context reduction: {baseline_chars / pack_chars:.1f}x")
+    return 0
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    repo_root, _cfg, out_dir = load_runtime(args)
+    db_path = out_dir / "graph.db"
+    if not db_path.exists():
+        raise ModelError(f"missing {db_path}. Run `skyhook graph build` first.")
+    from .mcp_server import McpUnavailable, serve
+
+    try:
+        serve(db_path)
+    except McpUnavailable as exc:
+        print(f"skyhook: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _open_graph(out_dir: Path):
+    """Open the graph read-only if it exists, else None (route degrades gracefully)."""
+    db_path = out_dir / "graph.db"
+    if not db_path.exists():
+        return None
+    try:
+        from .graphstore import GraphStore
+
+        return GraphStore(str(db_path), read_only=True)
+    except Exception:
+        return None
+
+
+def _run_graph_query(store, args: argparse.Namespace):
+    kind, arg = args.kind, args.arg
+    if kind == "exists":
+        return {"path": arg, "exists": store.file_exists(arg)}
+    if kind == "defs":
+        return store.find_symbol(arg)
+    if kind == "symbols-in-file":
+        return store.symbols_in_file(arg)
+    if kind == "callers":
+        return store.callers_of(arg, strict=getattr(args, "strict", False))
+    if kind == "callees":
+        return store.callees_of(arg)
+    if kind == "blast-radius":
+        return store.blast_radius(arg, depth=getattr(args, "depth", 3))
+    if kind == "search":
+        return store.search(arg)
+    raise ValueError(f"unknown query kind: {kind}")
+
+
+def _emit_graph(result, args: argparse.Namespace) -> None:
+    import json as _json
+
+    if getattr(args, "json", False):
+        print(_json.dumps(result, indent=2))
+        return
+    if isinstance(result, dict) and "impacted" in result:  # blast-radius
+        print(f"blast radius of {result['target']} (approximate): {len(result['impacted'])} symbols, "
+              f"{len(result.get('impactedFiles', []))} files")
+        for item in result["impacted"][:40]:
+            print(f"  d{item['distance']}  {item['path']}::{item['name']}")
+        return
+    if isinstance(result, dict):
+        for k, v in result.items():
+            print(f"{k}: {v}")
+        return
+    for item in result:
+        if isinstance(item, dict):
+            loc = item.get("path", "")
+            line = item.get("startLine") or item.get("line")
+            loc = f"{loc}:{line}" if line else loc
+            print(f"  {item.get('name','')}  [{item.get('structuralKind') or item.get('kind','')}]  {loc}".rstrip())
+        else:
+            print(f"  {item}")
 
 
 def cmd_check(args: argparse.Namespace) -> int:
     repo_root, cfg, out_dir = load_runtime(args)
     scan = scan_repo(repo_root, cfg)
     errors = check_outputs(out_dir, scan.digest)
+    errors += _check_graph(scan, out_dir)
     if errors:
         print("skyhook check failed:", file=sys.stderr)
         for error in errors:
@@ -102,6 +298,33 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_graph(scan, out_dir: Path) -> list:
+    """When a committed graph.json exists, verify it matches a fresh in-memory build."""
+    import json as _json
+
+    graph_json = out_dir / "graph.json"
+    if not graph_json.exists():
+        return []
+    from .graphstore import GraphStore
+    from .resolve import resolve_calls
+
+    store = GraphStore(":memory:")
+    store.build(scan, full=True)
+    resolve_calls(store)
+    fresh = store.export_dict()
+    store.close()
+    try:
+        committed = _json.loads(graph_json.read_text())
+    except (OSError, ValueError):
+        return ["graph.json is unreadable; run `skyhook graph build`"]
+    # Compare structure (ignore the upstream scanDigest field).
+    fresh.pop("scanDigest", None)
+    committed.pop("scanDigest", None)
+    if _json.dumps(fresh, sort_keys=True) != _json.dumps(committed, sort_keys=True):
+        return ["graph.json is stale; run `skyhook graph build`"]
+    return []
+
+
 def cmd_route(args: argparse.Namespace) -> int:
     _repo_root, _cfg, out_dir = load_runtime(args)
     data = load_existing_map(out_dir)
@@ -110,7 +333,12 @@ def cmd_route(args: argparse.Namespace) -> int:
     errors = validate_map(data)
     if errors:
         raise ModelError("map failed validation: " + "; ".join(errors))
-    route = build_route(data, _read_task(args), profile=args.profile)
+    graph = _open_graph(out_dir)
+    try:
+        route = build_route(data, _read_task(args), profile=args.profile, graph=graph)
+    finally:
+        if graph is not None:
+            graph.close()
     if getattr(args, "save", False):
         paths = write_route(out_dir, route)
         print(f"skyhook route: wrote {out_dir / 'routes'}", file=sys.stderr)

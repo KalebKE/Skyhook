@@ -46,11 +46,17 @@ class ScannerTests(unittest.TestCase):
             source = next(record for record in scan.files if record.path == "src/sync_service.py")
             test = next(record for record in scan.files if record.path == "tests/test_sync_service.py")
 
-            self.assertIn({"name": "SyncService", "kind": "service"}, source.symbols)
+            # FileRecord.symbols now carry richer AST-derived keys
+            # (structuralKind, line, scope, signature); match on the stable subset.
+            self.assertTrue(
+                any(s["name"] == "SyncService" and s["kind"] == "service" for s in source.symbols)
+            )
             self.assertIn("json", source.imports)
             self.assertIn("pathlib", source.imports)
             self.assertTrue(test.is_test)
-            self.assertIn({"name": "test_retry", "kind": "test"}, test.symbols)
+            self.assertTrue(
+                any(s["name"] == "test_retry" and s["kind"] == "test" for s in test.symbols)
+            )
 
     def test_language_specific_extractors(self):
         self.assertIn({"name": "VehicleRepository", "kind": "repository"}, extract_symbols("app/VehicleRepository.kt", "Kotlin", "class VehicleRepository"))
