@@ -12,8 +12,10 @@ serve those queries over MCP.
 It is not a vector database or full semantic index. It is a fast wayfinding
 layer plus a precise structural graph: where to start reading, which docs and
 tests matter, which files an edit impacts, and what calls what — without the
-agent grep-exploring the repo. On a sample task this cut context from ~35k
-tokens (reading the relevant files) to ~2k (the route pack): a ~17x reduction.
+agent grep-exploring the repo. On sample tasks this cut context from reading
+the relevant files (~35k tokens) down to the route pack (~2k): a **~7–17x
+reduction depending on the repo** — best case on a focused Python codebase,
+~7x on a large polyglot one. Measure it for your repo with `skyhook bench`.
 
 ## The Problem
 
