@@ -211,10 +211,16 @@ def cmd_bench(args: argparse.Namespace) -> int:
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
-    repo_root, _cfg, out_dir = load_runtime(args)
+    repo_root, cfg, out_dir = load_runtime(args)
     db_path = out_dir / "graph.db"
     if not db_path.exists():
-        raise ModelError(f"missing {db_path}. Run `skyhook graph build` first.")
+        # Self-bootstrap: build the graph so the server works in a fresh worktree
+        # without a prior `skyhook init`/`graph build`.
+        out_dir.mkdir(parents=True, exist_ok=True)
+        from .graphstore import build_graph
+
+        build_graph(scan_repo(repo_root, cfg), db_path, full=True)
+        _ensure_graph_gitignore(out_dir)
     from .mcp_server import McpUnavailable, serve
 
     try:
