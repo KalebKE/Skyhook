@@ -1,0 +1,1 @@
+((call target: (identifier) @name) (#not-any-of? @name "def" "defp" "defmacro" "defmodule" "alias" "import" "use" "require" "case" "cond" "if" "unless" "with" "for" "fn" "do" "test" "describe")) @reference.call

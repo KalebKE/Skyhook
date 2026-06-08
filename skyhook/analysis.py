@@ -38,19 +38,31 @@ def build_test_map(scan: RepoScan) -> List[Dict[str, Any]]:
     return tests[:500]
 
 
+# Optional AST-derived keys carried from a record symbol into the map symbol.
+_SYMBOL_EXTRA_KEYS = ("structuralKind", "line", "endLine", "scope", "signature")
+
+
+def project_symbol(symbol: Mapping[str, Any], path: str, area_id: str) -> Dict[str, Any]:
+    """Map a scanned record symbol into a map.json symbol, carrying AST extras."""
+    out: Dict[str, Any] = {
+        "name": symbol.get("name"),
+        "kind": symbol.get("kind"),
+        "path": path,
+        "areaId": area_id,
+    }
+    for key in _SYMBOL_EXTRA_KEYS:
+        value = symbol.get(key)
+        if value not in (None, ""):
+            out[key] = value
+    return out
+
+
 def build_symbol_map(scan: RepoScan, areas: Iterable[Mapping[str, Any]]) -> List[Dict[str, str]]:
     symbols: List[Dict[str, str]] = []
     for record in scan.sources:
         area_id = area_for_path(record.path, areas)
         for symbol in record.symbols:
-            symbols.append(
-                {
-                    "name": symbol["name"],
-                    "kind": symbol["kind"],
-                    "path": record.path,
-                    "areaId": area_id,
-                }
-            )
+            symbols.append(project_symbol(symbol, record.path, area_id))
     return symbols[:1000]
 
 
@@ -252,7 +264,13 @@ def _unique_symbols(symbols: List[Mapping[str, Any]]) -> List[Dict[str, str]]:
     seen = set()
     result: List[Dict[str, str]] = []
     for symbol in symbols:
-        key = (symbol.get("name"), symbol.get("path"), symbol.get("kind"))
+        key = (
+            symbol.get("name"),
+            symbol.get("path"),
+            symbol.get("kind"),
+            symbol.get("scope"),
+            symbol.get("line"),
+        )
         if key in seen:
             continue
         seen.add(key)

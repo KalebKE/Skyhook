@@ -132,7 +132,9 @@ def normalize_profile(profile: str | None) -> str:
     return normalized
 
 
-def build_route(data: Mapping[str, Any], task: str, profile: str | None = None) -> Dict[str, Any]:
+def build_route(
+    data: Mapping[str, Any], task: str, profile: str | None = None, graph: Any = None
+) -> Dict[str, Any]:
     cleaned_task = task.strip()
     if not cleaned_task:
         raise ValueError("skyhook route requires non-empty task text")
@@ -159,7 +161,7 @@ def build_route(data: Mapping[str, Any], task: str, profile: str | None = None) 
     confidence = _confidence(areas, docs, symbols, tests)
     search_terms = _search_terms(tokens, symbols, likely_edits, profile_cfg.get("extraSearchTerms", []))
 
-    return {
+    route = {
         "schemaVersion": 1,
         "id": _route_id(cleaned_task, route_profile),
         "profile": route_profile,
@@ -175,6 +177,56 @@ def build_route(data: Mapping[str, Any], task: str, profile: str | None = None) 
         "searchTerms": search_terms[:16],
         "evidence": evidence[:30],
     }
+    if graph is not None:
+        enrichment = _graph_enrichment(graph, symbols, likely_edits)
+        if enrichment.get("callChains"):
+            route["callChains"] = enrichment["callChains"]
+        if enrichment.get("blastRadius"):
+            route["blastRadius"] = enrichment["blastRadius"]
+    return route
+
+
+def _graph_enrichment(graph: Any, symbols, likely_edits) -> Dict[str, Any]:
+    """Use the AST graph to embed precise call chains + blast radius in the route,
+    so the agent gets structural context without grep-exploring. Best-effort."""
+    seeds: List[str] = []
+    for score, symbol in symbols:
+        if score <= 0:
+            continue
+        name = symbol.get("name")
+        if name and name not in seeds:
+            seeds.append(name)
+        if len(seeds) >= 5:
+            break
+
+    call_chains = []
+    for name in seeds:
+        try:
+            callers = graph.callers_of(name)
+            callees = graph.callees_of(name)
+        except Exception:
+            continue
+        if callers or callees:
+            call_chains.append(
+                {
+                    "symbol": name,
+                    "callers": [{"name": c["name"], "path": c.get("path")} for c in callers[:8]],
+                    "callees": [{"name": c["name"], "path": c.get("path")} for c in callees[:8]],
+                    "approximate": True,
+                }
+            )
+
+    blast = None
+    edit_paths = [e for e in likely_edits if isinstance(e, str) and e]
+    if edit_paths:
+        try:
+            br = graph.blast_radius(edit_paths[0], depth=2)
+            if br.get("impactedFiles"):
+                blast = {"target": br["target"], "impactedFiles": br["impactedFiles"][:20], "approximate": True}
+        except Exception:
+            blast = None
+
+    return {"callChains": call_chains, "blastRadius": blast}
 
 
 def task_tokens(task: str) -> List[str]:

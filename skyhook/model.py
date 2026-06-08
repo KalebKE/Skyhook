@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Mapping, Optional
 
+from .analysis import project_symbol
 from .config import SkyhookConfig
 from .scanner import RepoScan
 from .schema import empty_map, validate_map
@@ -377,14 +378,7 @@ def _static_symbols(scan: RepoScan) -> List[Dict[str, str]]:
                 continue
             if record.symbols:
                 for symbol in record.symbols[:6]:
-                    symbols.append(
-                        {
-                            "name": symbol["name"],
-                            "kind": symbol["kind"],
-                            "path": record.path,
-                            "areaId": area["id"],
-                        }
-                    )
+                    symbols.append(project_symbol(symbol, record.path, area["id"]))
             elif record.path in area["entrypoints"][:5]:
                 symbols.append(
                     {

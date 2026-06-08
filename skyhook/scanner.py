@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
@@ -8,6 +9,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
 
+from . import astextract
 from .config import SkyhookConfig
 from .schema import digest_records
 
@@ -81,6 +83,8 @@ class FileRecord:
     symbols: List[Dict[str, str]] = field(default_factory=list)
     imports: List[str] = field(default_factory=list)
     is_test: bool = False
+    file_ast: Optional[object] = None  # astextract.FileAST (runtime only; not in digest)
+    content_hash: str = ""  # sha1 of source bytes; for incremental graph rebuilds
 
     def digest_view(self) -> Dict[str, object]:
         return {
@@ -354,115 +358,77 @@ def _enrich_doc(abs_path: Path, record: FileRecord, max_bytes: int) -> None:
     record.snippet = _snippet(text)
 
 
+# Canonical extension per Skyhook language string — lets the AST extractor pick
+# the right grammar (and TS-vs-TSX variant) when only a language is known.
+_CANONICAL_EXT = {
+    "Python": ".py",
+    "Swift": ".swift",
+    "Kotlin": ".kt",
+    "Java": ".java",
+    "JavaScript": ".js",
+    "TypeScript": ".ts",
+    "Go": ".go",
+    "Elixir": ".ex",
+}
+
+
 def _enrich_source(abs_path: Path, record: FileRecord) -> None:
     try:
         raw = abs_path.read_bytes()[:50000]
-        text = raw.decode("utf-8", errors="replace")
     except OSError:
-        text = ""
-    record.symbols = extract_symbols(record.path, record.language, text)[:50]
-    record.imports = extract_imports(record.language, text)[:80]
+        raw = b""
+    record.content_hash = hashlib.sha1(raw).hexdigest()
+    file_ast = astextract.extract_file(record.path, record.language, raw)
+    record.file_ast = file_ast
+
+    symbols: List[Dict[str, object]] = []
+    for d in file_ast.defs[:50]:
+        symbols.append(
+            {
+                "name": d.name,
+                "kind": _symbol_kind(record.path, d.name, d.kind_fallback),
+                "structuralKind": d.structural_kind,
+                "line": d.start_line,
+                "endLine": d.end_line,
+                "scope": d.scope or "",
+                "signature": d.signature,
+            }
+        )
+    record.symbols = symbols  # type: ignore[assignment]
+
+    seen: set = set()
+    imports: List[str] = []
+    for ref in file_ast.imports:
+        if ref.target and ref.target not in seen:
+            seen.add(ref.target)
+            imports.append(ref.target)
+            if len(imports) >= 80:
+                break
+    record.imports = imports
 
 
 def extract_symbols(path: str, language: str, text: str) -> List[Dict[str, str]]:
-    patterns = _symbol_patterns(language)
-    symbols: List[Dict[str, str]] = []
-    seen = set()
-    for pattern, group, default_kind in patterns:
-        for match in re.finditer(pattern, text, flags=re.MULTILINE):
-            name = match.group(group)
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            symbols.append({"name": name, "kind": _symbol_kind(path, name, default_kind)})
-            if len(symbols) >= 50:
-                return symbols
-    return symbols
+    """Backward-compatible shim: AST-derived ``[{name, kind}]`` for a source string."""
+    file_ast = astextract.extract_file(path, language, text.encode("utf-8", "replace"))
+    out: List[Dict[str, str]] = []
+    for d in file_ast.defs[:50]:
+        out.append({"name": d.name, "kind": _symbol_kind(path, d.name, d.kind_fallback)})
+    return out
 
 
 def extract_imports(language: str, text: str) -> List[str]:
-    patterns = _import_patterns(language)
-    imports: List[str] = []
-    seen = set()
-    for pattern, group in patterns:
-        for match in re.finditer(pattern, text, flags=re.MULTILINE):
-            value = match.group(group).strip()
-            for candidate in _split_import_value(value):
-                if not candidate or candidate in seen:
-                    continue
-                seen.add(candidate)
-                imports.append(candidate)
-                if len(imports) >= 80:
-                    return imports
-    return imports
-
-
-def _symbol_patterns(language: str) -> List[tuple[str, int, str]]:
-    common_name = r"([A-Za-z_][A-Za-z0-9_]*)"
-    if language == "Python":
-        return [
-            (rf"^\s*class\s+{common_name}", 1, "model"),
-            (rf"^\s*(?:async\s+)?def\s+{common_name}", 1, "other"),
-        ]
-    if language in {"Kotlin", "Java"}:
-        return [
-            (rf"\b(?:data\s+class|sealed\s+class|enum\s+class|class|interface|object|record)\s+{common_name}", 1, "model"),
-            (rf"\bfun\s+{common_name}", 1, "other"),
-        ]
-    if language == "Swift":
-        return [
-            (rf"\b(?:class|struct|enum|protocol|actor)\s+{common_name}", 1, "model"),
-            (rf"\bfunc\s+{common_name}", 1, "other"),
-        ]
-    if language in {"JavaScript", "TypeScript"}:
-        return [
-            (rf"\bclass\s+{common_name}", 1, "component"),
-            (rf"\bfunction\s+{common_name}", 1, "other"),
-            (rf"\b(?:const|let|var)\s+{common_name}\s*=", 1, "other"),
-        ]
-    if language == "Go":
-        return [
-            (rf"^type\s+{common_name}\s+(?:struct|interface)", 1, "model"),
-            (rf"^func\s+(?:\([^)]+\)\s*)?{common_name}", 1, "other"),
-        ]
-    if language == "Elixir":
-        return [
-            (r"^\s*defmodule\s+([A-Za-z0-9_.]+)", 1, "module"),
-            (rf"^\s*defp?\s+{common_name}", 1, "other"),
-        ]
-    return []
-
-
-def _import_patterns(language: str) -> List[tuple[str, int]]:
-    if language == "Python":
-        return [
-            (r"^\s*import\s+([A-Za-z0-9_., ]+)", 1),
-            (r"^\s*from\s+([A-Za-z0-9_.]+)\s+import\s+", 1),
-        ]
-    if language in {"Kotlin", "Java"}:
-        return [(r"^\s*import\s+([A-Za-z0-9_.*]+)", 1)]
-    if language == "Swift":
-        return [(r"^\s*import\s+([A-Za-z0-9_]+)", 1)]
-    if language in {"JavaScript", "TypeScript"}:
-        return [
-            (r"\bfrom\s+[\"']([^\"']+)[\"']", 1),
-            (r"^\s*import\s+[\"']([^\"']+)[\"']", 1),
-            (r"\brequire\([\"']([^\"']+)[\"']\)", 1),
-        ]
-    if language == "Go":
-        return [(r"^\s*import\s+[\"`]([^\"`]+)[\"`]", 1)]
-    if language == "Elixir":
-        return [(r"^\s*(?:alias|import|use)\s+([A-Za-z0-9_.]+)", 1)]
-    return []
-
-
-def _split_import_value(value: str) -> List[str]:
-    values = []
-    for item in value.split(","):
-        cleaned = item.strip().split(" as ", 1)[0].strip()
-        if cleaned:
-            values.append(cleaned)
-    return values
+    """Backward-compatible shim: AST-derived import targets for a source string."""
+    synthetic = "_source" + _CANONICAL_EXT.get(language, "")
+    file_ast = astextract.extract_file(synthetic, language, text.encode("utf-8", "replace"))
+    seen: set = set()
+    out: List[str] = []
+    for ref in file_ast.imports:
+        if ref.target and ref.target not in seen:
+            seen.add(ref.target)
+            out.append(ref.target)
+            if len(out) >= 80:
+                break
+    return out
 
 
 def _symbol_kind(path: str, name: str, fallback: str) -> str:

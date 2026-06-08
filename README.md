@@ -4,9 +4,16 @@
 
 # Skyhook
 
-Skyhook builds a small, readable map of a repository and uses that map to create task-specific route packs for coding agents.
+Skyhook builds a small, readable map of a repository — backed by a tree-sitter
+**AST symbol + call graph** — and uses it to create task-specific route packs for
+coding agents, answer structural queries (callers, callees, blast radius), and
+serve those queries over MCP.
 
-It is not a vector database, code search engine, or full semantic index. It is a fast wayfinding layer. The output should tell an agent where to start reading, which docs matter, which tests are likely relevant, and which parts of the repo are probably involved in the current task.
+It is not a vector database or full semantic index. It is a fast wayfinding
+layer plus a precise structural graph: where to start reading, which docs and
+tests matter, which files an edit impacts, and what calls what — without the
+agent grep-exploring the repo. On a sample task this cut context from ~35k
+tokens (reading the relevant files) to ~2k (the route pack): a ~17x reduction.
 
 ## The Problem
 
@@ -34,6 +41,13 @@ The important artifacts are:
 - `.skyhook/architecture.md`: architecture and design references
 - `.skyhook/tests.md`: discovered tests and verification hints
 - `.skyhook/areas/<area>.md`: focused notes for detected code areas
+- `.skyhook/graph.json`: diffable export of the AST symbol + call graph (committed)
+- `.skyhook/graph.db`: the SQLite graph queried by `skyhook graph` and `skyhook mcp` (regenerable; gitignored)
+
+`skyhook init` builds the map **and** the graph in one pass. `skyhook graph
+query` answers structural questions (`callers`, `callees`, `blast-radius`,
+`exists`, `symbols-in-file`, `search`, `defs`); `skyhook mcp` serves the same as
+read-only MCP tools for any agent/editor.
 
 `skyhook route` takes a task, issue, review note, or bug report and builds a smaller route pack from the map. Route packs are shaped by profile:
 
@@ -50,7 +64,14 @@ The route pack is the part an agent should read for a specific job. The map is t
 
 Skyhook favors generated files over a service because agents and humans can inspect the output, commit it if they want, diff it in review, and use it on local machines or CI runners without extra infrastructure.
 
-The map is navigational by design. It should be good enough to point to the right code and docs quickly. It should not try to list every symbol or replace a developer reading the files that matter.
+The map is navigational by design — good enough to point to the right code and
+docs quickly. The **AST graph** underneath it adds the precise layer: real
+symbols (functions, classes, methods with scope), imports, and call edges parsed
+with tree-sitter (Python, Swift, Kotlin, Java, JavaScript, TypeScript, Go,
+Elixir). Call resolution is name-based and **approximate** (every result says
+so); precise binding via stack-graphs is a future addition. The graph is what
+lets `skyhook route` embed exact call chains and blast radius so agents stop
+guessing.
 
 Model usage is optional. With an OpenAI-compatible provider, Skyhook can produce better summaries. Without a key, static mode still produces deterministic output from filenames, docs, symbols, imports, tests, and repository structure.
 
@@ -194,9 +215,55 @@ Persist the route under `.skyhook/routes/`:
 skyhook route --task-file issue.md --save
 ```
 
+### `skyhook graph`
+
+Build and query the AST symbol + call graph. `skyhook init` builds it
+automatically; `skyhook graph build` rebuilds it on its own (incremental by
+default, `--full` to rebuild from scratch).
+
+```sh
+skyhook graph build
+skyhook graph query callers BillingService          # who calls it
+skyhook graph query callees BillingService          # what it calls
+skyhook graph query blast-radius src/billing.py      # what an edit impacts
+skyhook graph query exists src/billing.py            # does this path exist?
+skyhook graph query symbols-in-file src/billing.py
+skyhook graph query search Billing
+skyhook graph stats
+```
+
+Add `--json` for a harness. Call resolution is approximate; results are flagged.
+
+### `skyhook mcp`
+
+Serve the graph as read-only MCP tools (`find_symbol`, `callers_of`,
+`callees_of`, `blast_radius`, `file_exists`, `symbols_in_file`, `search`,
+`graph_stats`) for any MCP client. Requires the `mcp` extra
+(`pip install 'skyhook[mcp]'`, Python >= 3.10).
+
+```sh
+skyhook mcp --repo .
+```
+
+Register with a client (Claude Code, Cursor, Copilot, a pipeline):
+
+```json
+{ "mcpServers": { "skyhook": { "command": "skyhook", "args": ["mcp", "--repo", "/abs/path/to/repo"] } } }
+```
+
+### `skyhook bench`
+
+Estimate the context reduction of a graph route pack versus reading the files an
+agent would otherwise open:
+
+```sh
+skyhook bench --task "fix retry handling in BillingService"
+```
+
 ### `skyhook check`
 
-Use this when `.skyhook/` artifacts are committed and you want CI to catch stale maps:
+Use this when `.skyhook/` artifacts are committed and you want CI to catch stale
+maps **and** stale graphs (`graph.json`):
 
 ```sh
 skyhook check

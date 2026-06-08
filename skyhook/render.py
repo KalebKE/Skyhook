@@ -285,6 +285,7 @@ def render_route_markdown(route: Mapping[str, Any]) -> str:
     _list_field(lines, "Architecture And Design", route.get("architecture", []))
     _list_field(lines, "Constraints And Gotchas", route.get("constraints", []))
     _list_field(lines, "Search Terms", route.get("searchTerms", []))
+    _render_call_graph(lines, route)
     evidence = route.get("evidence", []) or []
     lines.extend(["## Evidence", ""])
     if evidence:
@@ -296,6 +297,23 @@ def render_route_markdown(route: Mapping[str, Any]) -> str:
         lines.append("- No evidence generated.")
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_call_graph(lines: list, route: Mapping[str, Any]) -> None:
+    """Gated AST call-graph section (omitted when the graph wasn't available)."""
+    chains = route.get("callChains") or []
+    blast = route.get("blastRadius")
+    if not chains and not blast:
+        return
+    lines.extend(["## Call Graph", "", "_Approximate (AST name-resolution)._", ""])
+    for cc in chains:
+        callers = ", ".join(f"`{c['name']}`" for c in cc.get("callers", [])) or "—"
+        callees = ", ".join(f"`{c['name']}`" for c in cc.get("callees", [])) or "—"
+        lines.append(f"- `{cc['symbol']}` — called by: {callers}; calls: {callees}")
+    if blast and blast.get("impactedFiles"):
+        files = ", ".join(f"`{p}`" for p in blast["impactedFiles"])
+        lines.append(f"- Blast radius of `{blast['target']}`: {files}")
+    lines.append("")
 
 
 def markdown_outputs(data: Mapping[str, Any]) -> Dict[str, str]:
