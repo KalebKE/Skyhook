@@ -19,7 +19,10 @@ import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Resolution stages the resolver considers precise (vs heuristic "global").
+PRECISE_STAGES = frozenset({"same_file", "qualified", "imported", "same_package"})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -28,7 +31,8 @@ CREATE TABLE IF NOT EXISTS files (
     path TEXT UNIQUE NOT NULL,
     language TEXT,
     content_hash TEXT,
-    is_test INTEGER DEFAULT 0
+    is_test INTEGER DEFAULT 0,
+    package TEXT
 );
 CREATE TABLE IF NOT EXISTS symbols (
     id INTEGER PRIMARY KEY,
@@ -47,7 +51,9 @@ CREATE TABLE IF NOT EXISTS calls (
     src_symbol_id INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
     src_file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
     callee_name TEXT NOT NULL,
+    qualifier TEXT,
     resolved_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
+    resolution TEXT,
     line INTEGER
 );
 CREATE TABLE IF NOT EXISTS imports (
@@ -66,8 +72,11 @@ CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
 CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_name);
 CREATE INDEX IF NOT EXISTS idx_calls_resolved ON calls(resolved_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_calls_src ON calls(src_symbol_id);
+CREATE INDEX IF NOT EXISTS idx_calls_resolution ON calls(resolution);
 CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(file_id);
 """
+
+_TABLES = ("call_candidates", "calls", "imports", "symbols", "files", "meta")
 
 
 def _symbol_uid(path: str, structural_kind: str, scope: Optional[str], name: str, occ: int) -> str:
@@ -93,8 +102,33 @@ class GraphStore:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
         if not read_only:
+            self._invalidate_on_schema_mismatch()
             self.conn.executescript(_SCHEMA)
             self.conn.commit()
+
+    def _invalidate_on_schema_mismatch(self) -> None:
+        """Drop everything when the on-disk schema version differs.
+
+        ``CREATE TABLE IF NOT EXISTS`` cannot alter existing tables, so a db
+        written by an older Skyhook would otherwise keep its old columns and
+        crash newer queries. graph.db is regenerable by design: on a version
+        mismatch we reset to empty, and the next :meth:`build` — even an
+        "incremental" one — naturally repopulates everything (no files rows
+        means nothing gets skipped).
+        """
+        try:
+            row = self.conn.execute(
+                "SELECT value FROM meta WHERE key='schemaVersion'"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return  # fresh db: no meta table yet
+        if row is not None and row["value"] == str(SCHEMA_VERSION):
+            return
+        self.conn.execute("PRAGMA foreign_keys=OFF")
+        for table in _TABLES:
+            self.conn.execute(f"DROP TABLE IF EXISTS {table}")
+        self.conn.execute("PRAGMA foreign_keys=ON")
+        self.conn.commit()
 
     # ------------------------------------------------------------------ build
 
@@ -405,6 +439,21 @@ class GraphStore:
 
     def close(self) -> None:
         self.conn.close()
+
+
+def graph_db_version(db_path: Path) -> Optional[str]:
+    """The ``schemaVersion`` recorded in an existing graph.db, or None."""
+    try:
+        conn = sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return None
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key='schemaVersion'").fetchone()
+        return row[0] if row else None
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
 
 
 def build_graph(

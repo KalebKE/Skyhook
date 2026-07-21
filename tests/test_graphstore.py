@@ -112,6 +112,39 @@ class GraphStoreTests(unittest.TestCase):
             impacted = {i["name"] for i in blast["impacted"]}
             self.assertIn("run", impacted)  # run -> foo -> helper (transitive)
 
+    def test_schema_mismatch_resets_db_and_incremental_build_repopulates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make_repo(tmp)
+            db = Path(tmp) / "graph.db"
+            store = GraphStore(str(db))
+            store.build(self._scan(root))
+            self.assertGreater(store.stats()["symbols"], 0)
+            # Simulate a db written by an older Skyhook.
+            store.conn.execute("UPDATE meta SET value='0' WHERE key='schemaVersion'")
+            store.conn.commit()
+            store.close()
+
+            # Reopening writeable must reset, and an *incremental* build must
+            # still repopulate everything (empty files table -> nothing skipped).
+            store = GraphStore(str(db))
+            self.assertEqual(store.stats()["symbols"], 0)
+            summary = store.build(self._scan(root), full=False)
+            self.assertEqual(summary["skipped"], 0)
+            self.assertGreater(store.stats()["symbols"], 0)
+            store.close()
+
+    def test_graph_db_version_reports_schema_version(self):
+        from skyhook.graphstore import SCHEMA_VERSION, graph_db_version
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make_repo(tmp)
+            db = Path(tmp) / "graph.db"
+            self.assertIsNone(graph_db_version(db))  # missing db
+            store = GraphStore(str(db))
+            store.build(self._scan(root))
+            store.close()
+            self.assertEqual(graph_db_version(db), str(SCHEMA_VERSION))
+
 
 if __name__ == "__main__":
     unittest.main()

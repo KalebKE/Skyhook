@@ -180,6 +180,28 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(main(["route", "--repo", str(root)]), 0)
             self.assertIn("src/vehicles.py", stdin_output.getvalue())
 
+    def test_graph_build_forwards_full_flag(self):
+        # `skyhook graph build --full` must actually reach build_graph — it was
+        # silently hard-coded to full=False (declared flag, no effect).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            (root / "main.py").write_text("def top():\n    return 1\n", encoding="utf-8")
+
+            calls = []
+            import skyhook.graphstore as graphstore_mod
+
+            real_build_graph = graphstore_mod.build_graph
+
+            def spy(scan, db_path, full=False, **kwargs):
+                calls.append(full)
+                return real_build_graph(scan, db_path, full=full, **kwargs)
+
+            with patch.object(graphstore_mod, "build_graph", side_effect=spy):
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(main(["graph", "build", "--repo", str(root), "--full"]), 0)
+            self.assertEqual(calls, [True])
+
 
 if __name__ == "__main__":
     unittest.main()

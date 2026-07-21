@@ -125,11 +125,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _build_graph_artifacts(scan, out_dir: Path) -> None:
+def _build_graph_artifacts(scan, out_dir: Path, full: bool = False) -> None:
     """Build .skyhook/graph.db (+ diffable graph.json) from an existing scan."""
     from .graphstore import build_graph
 
-    build_graph(scan, out_dir / "graph.db", full=False)
+    build_graph(scan, out_dir / "graph.db", full=full)
     _ensure_graph_gitignore(out_dir)
 
 
@@ -163,13 +163,13 @@ def _ensure_graph(repo_root: Path, cfg, out_dir: Path) -> Path:
     (no graph.json commit-artifact), and if we create ``.skyhook/`` ourselves we
     gitignore the whole thing so the agent's tree stays clean.
     """
+    from .graphstore import SCHEMA_VERSION, build_graph, graph_db_version
+
     db_path = out_dir / "graph.db"
-    if db_path.exists():
+    if db_path.exists() and graph_db_version(db_path) == str(SCHEMA_VERSION):
         return db_path
     fresh = not out_dir.exists()
     out_dir.mkdir(parents=True, exist_ok=True)
-    from .graphstore import build_graph
-
     build_graph(scan_repo(repo_root, cfg), db_path, full=True, export_json=False)
     _ensure_graph_gitignore(out_dir, ignore_all=fresh)
     return db_path
@@ -184,7 +184,7 @@ def cmd_graph(args: argparse.Namespace) -> int:
 
     if sub == "build":
         scan = scan_repo(repo_root, cfg)
-        _build_graph_artifacts(scan, out_dir)
+        _build_graph_artifacts(scan, out_dir, full=getattr(args, "full", False))
         store = GraphStore(str(db_path), read_only=True)
         print(f"skyhook graph: built {db_path}")
         print(f"- {store.stats()}")
