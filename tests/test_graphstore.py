@@ -108,9 +108,47 @@ class GraphStoreTests(unittest.TestCase):
             callees = {c["name"] for c in store.callees_of("foo")}
             self.assertIn("helper", callees)
             blast = store.blast_radius("pkg/a.py", depth=3)
-            self.assertTrue(blast["approximate"])
+            # Every edge in this fixture resolves precisely, so the blanket
+            # approximate flag is gone.
+            self.assertFalse(blast["approximate"])
             impacted = {i["name"] for i in blast["impacted"]}
             self.assertIn("run", impacted)  # run -> foo -> helper (transitive)
+
+    def test_graded_resolution_surface(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make_repo(tmp)
+            store = GraphStore(":memory:")
+            store.build(self._scan(root))
+            resolve_calls(store)
+
+            # callers/callees rows carry a resolution grade; precise stages
+            # clear the approximate flag.
+            callers = store.callers_of("helper")
+            self.assertTrue(callers)
+            for row in callers:
+                self.assertIn("resolution", row)
+            foo_edge = next(c for c in callers if c["name"] == "foo")
+            self.assertEqual(foo_edge["resolution"], "same_file")
+            self.assertFalse(foo_edge["approximate"])
+
+            # stats breaks resolution down by stage.
+            stats = store.stats()
+            self.assertIn("byResolution", stats)
+            self.assertGreaterEqual(stats["precise_calls"], 1)
+
+            # blast radius reports the precise/heuristic edge split.
+            blast = store.blast_radius("pkg/a.py", depth=3)
+            self.assertIn("resolutionSummary", blast)
+            self.assertGreaterEqual(blast["resolutionSummary"]["preciseEdges"], 1)
+
+            # export carries qualifiers; the digest ignores resolutionSummary.
+            export = store.export_dict()
+            self.assertIn("resolutionSummary", export)
+            digest_before = store.digest()
+            store.conn.execute("UPDATE calls SET resolution=NULL")
+            store.conn.commit()
+            self.assertEqual(store.digest(), digest_before)
+            store.close()
 
     def test_schema_mismatch_resets_db_and_incremental_build_repopulates(self):
         with tempfile.TemporaryDirectory() as tmp:

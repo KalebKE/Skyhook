@@ -293,6 +293,15 @@ class GraphStore:
             "SELECT COUNT(*) AS n FROM calls WHERE resolved_symbol_id IS NOT NULL"
         ).fetchone()["n"]
         calls = count("calls")
+        by_resolution: Dict[str, int] = {}
+        precise = 0
+        for row in self.conn.execute(
+            "SELECT resolution, COUNT(*) AS n FROM calls "
+            "WHERE resolution IS NOT NULL GROUP BY resolution"
+        ):
+            by_resolution[row["resolution"]] = row["n"]
+            if row["resolution"] in PRECISE_STAGES:
+                precise += row["n"]
         return {
             "files": count("files"),
             "symbols": count("symbols"),
@@ -300,6 +309,9 @@ class GraphStore:
             "imports": count("imports"),
             "resolved_calls": resolved,
             "resolved_pct": round(100 * resolved / calls, 1) if calls else 0,
+            "precise_calls": precise,
+            "precise_pct": round(100 * precise / calls, 1) if calls else 0,
+            "byResolution": by_resolution,
         }
 
     def _symbol_ids_for(self, target: str) -> List[int]:
@@ -315,20 +327,40 @@ class GraphStore:
             rows = self.conn.execute("SELECT id FROM symbols WHERE name=?", (target,)).fetchall()
         return [r["id"] for r in rows]
 
+    @staticmethod
+    def _edge(name: str, path: Optional[str], line: Optional[int], resolution: Optional[str]) -> Dict:
+        """Row shape for call edges: graded ``resolution`` + derived ``approximate``."""
+        return {
+            "name": name,
+            "path": path,
+            "line": line,
+            "resolution": resolution,
+            "approximate": resolution not in PRECISE_STAGES,
+        }
+
     def callers_of(self, name: str, strict: bool = False) -> List[Dict]:
-        """Symbols that call `name`. Approximate unless ``strict`` (resolved-only)."""
+        """Symbols that call `name`, with per-edge ``resolution`` grading.
+
+        Resolved edges carry their resolution stage (precise stages clear the
+        ``approximate`` flag); candidate-derived edges (skipped when ``strict``)
+        carry ``resolution: "candidate"``.
+        """
         target_ids = [r["id"] for r in self.conn.execute("SELECT id FROM symbols WHERE name=?", (name,))]
         if not target_ids:
             return []
         ph = ",".join("?" * len(target_ids))
         out: Dict[tuple, Dict] = {}
         for r in self.conn.execute(
-            f"SELECT DISTINCT s.name AS name, f.path AS path, c.line AS line "
+            f"SELECT DISTINCT s.name AS name, f.path AS path, c.line AS line, c.resolution AS resolution "
             f"FROM calls c JOIN symbols s ON c.src_symbol_id=s.id JOIN files f ON s.file_id=f.id "
             f"WHERE c.resolved_symbol_id IN ({ph})",
             target_ids,
         ):
-            out[(r["name"], r["path"])] = {"name": r["name"], "path": r["path"], "line": r["line"], "approximate": True}
+            key = (r["name"], r["path"])
+            edge = self._edge(r["name"], r["path"], r["line"], r["resolution"])
+            # Keep the most precise edge when the same caller hits multiple times.
+            if key not in out or (out[key]["approximate"] and not edge["approximate"]):
+                out[key] = edge
         if not strict:
             for r in self.conn.execute(
                 f"SELECT DISTINCT s.name AS name, f.path AS path, c.line AS line "
@@ -337,7 +369,7 @@ class GraphStore:
                 f"WHERE cc.symbol_id IN ({ph})",
                 target_ids,
             ):
-                out.setdefault((r["name"], r["path"]), {"name": r["name"], "path": r["path"], "line": r["line"], "approximate": True})
+                out.setdefault((r["name"], r["path"]), self._edge(r["name"], r["path"], r["line"], "candidate"))
         return list(out.values())
 
     def callees_of(self, name: str) -> List[Dict]:
@@ -348,38 +380,66 @@ class GraphStore:
         ph = ",".join("?" * len(src_ids))
         out: Dict[str, Dict] = {}
         for r in self.conn.execute(
-            f"SELECT DISTINCT t.name AS name, f.path AS path FROM calls c "
+            f"SELECT DISTINCT t.name AS name, f.path AS path, c.resolution AS resolution "
+            f"FROM calls c "
             f"JOIN symbols t ON c.resolved_symbol_id=t.id JOIN files f ON t.file_id=f.id "
             f"WHERE c.src_symbol_id IN ({ph})",
             src_ids,
         ):
-            out[r["name"]] = {"name": r["name"], "path": r["path"], "resolved": True, "approximate": True}
+            edge = self._edge(r["name"], r["path"], None, r["resolution"])
+            edge.pop("line", None)
+            edge["resolved"] = True
+            if r["name"] not in out or (out[r["name"]]["approximate"] and not edge["approximate"]):
+                out[r["name"]] = edge
         for r in self.conn.execute(
             f"SELECT DISTINCT callee_name AS name FROM calls "
             f"WHERE src_symbol_id IN ({ph}) AND resolved_symbol_id IS NULL",
             src_ids,
         ):
-            out.setdefault(r["name"], {"name": r["name"], "path": None, "resolved": False, "approximate": True})
+            out.setdefault(
+                r["name"],
+                {"name": r["name"], "path": None, "resolved": False, "resolution": None, "approximate": True},
+            )
         return list(out.values())
 
     def blast_radius(self, target: str, depth: int = 3) -> Dict:
-        """Transitive reverse-call closure: who is (in)directly impacted by `target`."""
+        """Transitive reverse-call closure: who is (in)directly impacted by `target`.
+
+        Tracks how many traversed edges were precise-stage resolutions vs
+        heuristic (global) or candidate guesses; ``approximate`` is true only
+        when heuristic edges contributed to the closure.
+        """
         seed = set(self._symbol_ids_for(target))
         if not seed:
-            return {"target": target, "approximate": True, "impacted": []}
+            return {
+                "target": target,
+                "approximate": True,
+                "impacted": [],
+                "resolutionSummary": {"preciseEdges": 0, "heuristicEdges": 0},
+            }
         impacted: Dict[int, int] = {}  # symbol_id -> distance
         frontier = set(seed)
+        precise_edges = 0
+        heuristic_edges = 0
+        precise_ph = ",".join("?" * len(PRECISE_STAGES))
+        precise_args = tuple(PRECISE_STAGES)
         for dist in range(1, max(1, depth) + 1):
             if not frontier:
                 break
             ph = ",".join("?" * len(frontier))
             callers = set()
             for r in self.conn.execute(
-                f"SELECT DISTINCT c.src_symbol_id AS sid FROM calls c "
+                f"SELECT DISTINCT c.src_symbol_id AS sid, "
+                f"(c.resolution IN ({precise_ph})) AS precise "
+                f"FROM calls c "
                 f"WHERE c.resolved_symbol_id IN ({ph}) AND c.src_symbol_id IS NOT NULL",
-                tuple(frontier),
+                precise_args + tuple(frontier),
             ):
                 callers.add(r["sid"])
+                if r["precise"]:
+                    precise_edges += 1
+                else:
+                    heuristic_edges += 1
             for r in self.conn.execute(
                 f"SELECT DISTINCT c.src_symbol_id AS sid FROM call_candidates cc "
                 f"JOIN calls c ON cc.call_id=c.id "
@@ -387,6 +447,7 @@ class GraphStore:
                 tuple(frontier),
             ):
                 callers.add(r["sid"])
+                heuristic_edges += 1
             new = {sid for sid in callers if sid not in impacted and sid not in seed}
             for sid in new:
                 impacted[sid] = dist
@@ -402,7 +463,13 @@ class GraphStore:
                 rows.append({"name": r["name"], "path": r["path"], "distance": impacted[r["id"]]})
         rows.sort(key=lambda x: (x["distance"], x["path"], x["name"]))
         files = sorted({r["path"] for r in rows})
-        return {"target": target, "approximate": True, "impacted": rows, "impactedFiles": files}
+        return {
+            "target": target,
+            "approximate": heuristic_edges > 0,
+            "impacted": rows,
+            "impactedFiles": files,
+            "resolutionSummary": {"preciseEdges": precise_edges, "heuristicEdges": heuristic_edges},
+        }
 
     @staticmethod
     def _symbol_row(row: sqlite3.Row) -> Dict:
@@ -437,16 +504,29 @@ class GraphStore:
             "ORDER BY f.path, i.line, i.target"
         ).fetchall()
         calls = self.conn.execute(
-            "SELECT f.path AS path, c.callee_name, c.line FROM calls c "
+            "SELECT f.path AS path, c.callee_name, c.qualifier, c.line FROM calls c "
             "JOIN files f ON c.src_file_id=f.id ORDER BY f.path, c.line, c.callee_name"
         ).fetchall()
+        call_entries = []
+        for r in calls:
+            entry = {"path": r["path"], "callee_name": r["callee_name"], "line": r["line"]}
+            if r["qualifier"]:
+                entry["qualifier"] = r["qualifier"]
+            call_entries.append(entry)
+        stats = self.stats()
         return {
             "schemaVersion": SCHEMA_VERSION,
             "scanDigest": self._meta_get("scanDigest") or "",
+            # Informational only: popped by digest()/check so it never churns CI.
+            "resolutionSummary": {
+                "resolvedPct": stats["resolved_pct"],
+                "precisePct": stats["precise_pct"],
+                "byStage": stats["byResolution"],
+            },
             "files": [dict(r) for r in files],
             "symbols": [dict(r) for r in symbols],
             "imports": [dict(r) for r in imports],
-            "calls": [dict(r) for r in calls],
+            "calls": call_entries,
         }
 
     def export_json(self, path: Path) -> None:
@@ -455,6 +535,7 @@ class GraphStore:
     def digest(self) -> str:
         payload = self.export_dict()
         payload.pop("scanDigest", None)  # digest the structure, not the upstream digest
+        payload.pop("resolutionSummary", None)  # informational; must not churn checks
         blob = json.dumps(payload, sort_keys=True).encode("utf-8")
         return hashlib.sha1(blob).hexdigest()
 

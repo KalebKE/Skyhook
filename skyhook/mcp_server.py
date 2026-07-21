@@ -51,7 +51,9 @@ def build_server(store):
 
     @server.tool()
     def callers_of(name: str, strict: bool = False) -> List[dict]:
-        """Symbols that call `name`. Approximate unless strict (resolved-only)."""
+        """Symbols that call `name`. Each edge carries a `resolution` grade
+        (same_file/qualified/imported/same_package are precise; global and
+        candidate edges are heuristic). `strict` drops candidate edges."""
         return store.callers_of(name, strict=strict)
 
     @server.tool()
@@ -61,7 +63,9 @@ def build_server(store):
 
     @server.tool()
     def blast_radius(target: str, depth: int = 3) -> dict:
-        """Transitive reverse-call impact of a file or symbol (approximate)."""
+        """Transitive reverse-call impact of a file or symbol. `approximate` is
+        true only when heuristic (name-matched) edges contributed; see
+        `resolutionSummary` for the precise/heuristic edge split."""
         return store.blast_radius(target, depth=depth)
 
     @server.tool()

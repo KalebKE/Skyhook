@@ -305,7 +305,15 @@ def _render_call_graph(lines: list, route: Mapping[str, Any]) -> None:
     blast = route.get("blastRadius")
     if not chains and not blast:
         return
-    lines.extend(["## Call Graph", "", "_Approximate (AST name-resolution)._", ""])
+    any_approx = any(cc.get("approximate", True) for cc in chains) or bool(
+        blast and blast.get("approximate", True)
+    )
+    note = (
+        "_Some edges are heuristic (name-matched); precise edges resolved via scope/imports._"
+        if any_approx
+        else "_Edges resolved via scope, qualifiers, and imports._"
+    )
+    lines.extend(["## Call Graph", "", note, ""])
     for cc in chains:
         callers = ", ".join(f"`{c['name']}`" for c in cc.get("callers", [])) or "—"
         callees = ", ".join(f"`{c['name']}`" for c in cc.get("callees", [])) or "—"

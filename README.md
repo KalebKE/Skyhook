@@ -68,12 +68,19 @@ Skyhook favors generated files over a service because agents and humans can insp
 
 The map is navigational by design — good enough to point to the right code and
 docs quickly. The **AST graph** underneath it adds the precise layer: real
-symbols (functions, classes, methods with scope), imports, and call edges parsed
-with tree-sitter (Python, Swift, Kotlin, Java, JavaScript, TypeScript, Go,
-Elixir). Call resolution is name-based and **approximate** (every result says
-so); precise binding via stack-graphs is a future addition. The graph is what
-lets `skyhook route` embed exact call chains and blast radius so agents stop
-guessing.
+symbols (functions, classes, methods with scope), imports, member calls with
+their receivers, and package declarations, parsed with tree-sitter (Python,
+Swift, Kotlin, Java, JavaScript, TypeScript, Go, Elixir). Calls resolve through
+a staged ladder — same file, qualifier (`Foo.bar()` → `bar` inside `Foo`),
+imports, same package, then a repo-wide name match as the last resort — and
+every edge carries its `resolution` grade, so consumers can tell a
+scope-resolved binding from a heuristic guess instead of treating everything as
+approximate. The graph is what lets `skyhook route` embed call chains and blast
+radius so agents stop guessing.
+
+Upgrading from an older Skyhook: the graph schema changed — run
+`skyhook graph build` once per repo to regenerate `graph.db`/`graph.json`
+(kotlin member calls need `tree-sitter-kotlin>=1.1`).
 
 Model usage is optional. With an OpenAI-compatible provider, Skyhook can produce better summaries. Without a key, static mode still produces deterministic output from filenames, docs, symbols, imports, tests, and repository structure.
 
@@ -234,7 +241,10 @@ skyhook graph query search Billing
 skyhook graph stats
 ```
 
-Add `--json` for a harness. Call resolution is approximate; results are flagged.
+Add `--json` for a harness. Every call edge carries a `resolution` grade
+(`same_file`/`qualified`/`imported`/`same_package` are precise; `global` and
+`candidate` are heuristic and keep the `approximate` flag). `skyhook graph
+stats` breaks resolution down by stage.
 
 ### `skyhook mcp`
 

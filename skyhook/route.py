@@ -207,12 +207,19 @@ def _graph_enrichment(graph: Any, symbols, likely_edits) -> Dict[str, Any]:
         except Exception:
             continue
         if callers or callees:
+            edges = callers[:8] + callees[:8]
             call_chains.append(
                 {
                     "symbol": name,
-                    "callers": [{"name": c["name"], "path": c.get("path")} for c in callers[:8]],
-                    "callees": [{"name": c["name"], "path": c.get("path")} for c in callees[:8]],
-                    "approximate": True,
+                    "callers": [
+                        {"name": c["name"], "path": c.get("path"), "resolution": c.get("resolution")}
+                        for c in callers[:8]
+                    ],
+                    "callees": [
+                        {"name": c["name"], "path": c.get("path"), "resolution": c.get("resolution")}
+                        for c in callees[:8]
+                    ],
+                    "approximate": any(c.get("approximate", True) for c in edges),
                 }
             )
 
@@ -222,7 +229,12 @@ def _graph_enrichment(graph: Any, symbols, likely_edits) -> Dict[str, Any]:
         try:
             br = graph.blast_radius(edit_paths[0], depth=2)
             if br.get("impactedFiles"):
-                blast = {"target": br["target"], "impactedFiles": br["impactedFiles"][:20], "approximate": True}
+                blast = {
+                    "target": br["target"],
+                    "impactedFiles": br["impactedFiles"][:20],
+                    "approximate": br.get("approximate", True),
+                    "resolutionSummary": br.get("resolutionSummary"),
+                }
         except Exception:
             blast = None
 

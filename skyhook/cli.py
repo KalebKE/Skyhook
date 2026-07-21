@@ -294,7 +294,8 @@ def _emit_graph(result, args: argparse.Namespace) -> None:
         print(_json.dumps(result, indent=2))
         return
     if isinstance(result, dict) and "impacted" in result:  # blast-radius
-        print(f"blast radius of {result['target']} (approximate): {len(result['impacted'])} symbols, "
+        note = " (approximate)" if result.get("approximate") else ""
+        print(f"blast radius of {result['target']}{note}: {len(result['impacted'])} symbols, "
               f"{len(result.get('impactedFiles', []))} files")
         for item in result["impacted"][:40]:
             print(f"  d{item['distance']}  {item['path']}::{item['name']}")
@@ -347,9 +348,11 @@ def _check_graph(scan, out_dir: Path) -> list:
         committed = _json.loads(graph_json.read_text())
     except (OSError, ValueError):
         return ["graph.json is unreadable; run `skyhook graph build`"]
-    # Compare structure (ignore the upstream scanDigest field).
+    # Compare structure (ignore the upstream scanDigest + informational summary).
     fresh.pop("scanDigest", None)
     committed.pop("scanDigest", None)
+    fresh.pop("resolutionSummary", None)
+    committed.pop("resolutionSummary", None)
     if _json.dumps(fresh, sort_keys=True) != _json.dumps(committed, sort_keys=True):
         return ["graph.json is stale; run `skyhook graph build`"]
     return []
