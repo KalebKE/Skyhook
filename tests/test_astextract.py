@@ -104,6 +104,13 @@ class AstExtractKotlinEnrichmentTests(unittest.TestCase):
         self.assertIn(("log", "Telemetry"), calls)         # object/qualified call
         self.assertIn(("Car", None), calls)                # constructor (bare)
 
+    def test_negated_call_is_extracted(self):
+        # `!foo()` parses as (call_expression (unary_expression ! (identifier)))
+        # in tree-sitter-kotlin 1.1 — the operator binds inside the call.
+        src = b"fun start(): Boolean {\n    if (!initializeProtocol()) return false\n    return true\n}\nfun initializeProtocol(): Boolean = true\n"
+        fa = extract_file("C.kt", "Kotlin", src)
+        self.assertIn("initializeProtocol", {c.callee_name for c in fa.calls})
+
     def test_lambda_chain_receiver_normalizes_to_none(self):
         fa = extract_file("Car.kt", "Kotlin", self.SRC)
         sum_call = next(c for c in fa.calls if c.callee_name == "sum")
