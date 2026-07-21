@@ -84,6 +84,25 @@ def _symbol_uid(path: str, structural_kind: str, scope: Optional[str], name: str
     return hashlib.sha1(raw).hexdigest()[:16]
 
 
+def _derive_package(path: str, language: Optional[str]) -> Optional[str]:
+    """Fallback namespace for languages without a parsed package declaration.
+
+    Python: dotted module path; Go: directory; JS/TS: path sans extension.
+    Languages with declared packages (Kotlin/Java/Go via package.scm) normally
+    carry ``FileAST.package`` and never reach this.
+    """
+    if language == "Python":
+        mod = path[: -len(".py")] if path.endswith(".py") else path
+        if mod.endswith("/__init__"):
+            mod = mod[: -len("/__init__")]
+        return mod.replace("/", ".")
+    if language == "Go":
+        return path.rsplit("/", 1)[0] if "/" in path else ""
+    if language in ("JavaScript", "TypeScript"):
+        return path.rsplit(".", 1)[0] if "." in path else path
+    return None
+
+
 class GraphStore:
     """Owns a connection to a graph database (file or ``:memory:``)."""
 
@@ -167,9 +186,10 @@ class GraphStore:
 
             # Replace this file's rows (cascade clears its symbols/calls/imports).
             self.conn.execute("DELETE FROM files WHERE path=?", (record.path,))
+            package = getattr(fa, "package", None) or _derive_package(record.path, record.language)
             cur = self.conn.execute(
-                "INSERT INTO files(path, language, content_hash, is_test) VALUES(?,?,?,?)",
-                (record.path, record.language, record.content_hash, 1 if record.is_test else 0),
+                "INSERT INTO files(path, language, content_hash, is_test, package) VALUES(?,?,?,?,?)",
+                (record.path, record.language, record.content_hash, 1 if record.is_test else 0, package),
             )
             file_id = cur.lastrowid
             summary["files"] += 1
@@ -208,8 +228,9 @@ class GraphStore:
             for c in fa.calls:
                 src_id = name_to_id.get(c.enclosing) if c.enclosing else None
                 self.conn.execute(
-                    "INSERT INTO calls(src_symbol_id, src_file_id, callee_name, line) VALUES(?,?,?,?)",
-                    (src_id, file_id, c.callee_name, c.line),
+                    "INSERT INTO calls(src_symbol_id, src_file_id, callee_name, qualifier, line)"
+                    " VALUES(?,?,?,?,?)",
+                    (src_id, file_id, c.callee_name, getattr(c, "qualifier", None), c.line),
                 )
                 summary["calls"] += 1
 

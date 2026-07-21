@@ -13,6 +13,7 @@ grammar yields an empty :class:`FileAST` (graceful skip).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from importlib import resources
 from typing import Dict, List, Optional
@@ -47,9 +48,26 @@ _KIND_FALLBACK: Dict[str, str] = {
     "constant": "other",
 }
 
-_DEFS_CAP = 50
+# Cap raised from 50 with the richer Kotlin/Java tags: hitting it silently
+# truncates defs, which breaks byte-range scope assignment for later symbols.
+_DEFS_CAP = 150
 _IMPORTS_CAP = 80
 _CALLS_CAP = 2000
+
+def _normalize_qualifier(text: Optional[str]) -> Optional[str]:
+    """Keep qualifiers usable for name matching: dotted identifier chains and
+    the self-reference keywords. Lambda receivers, call chains, literals etc.
+    normalize to None."""
+    if not text:
+        return None
+    text = text.strip()
+    if not text or len(text) > 80:
+        return None
+    if text in ("this", "self", "super"):
+        return text
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", text):
+        return text
+    return None
 
 
 @dataclass
@@ -70,6 +88,7 @@ class CallSite:
     callee_name: str
     line: int
     enclosing: Optional[str] = None  # name of the symbol containing the call
+    qualifier: Optional[str] = None  # receiver/qualifier text ("foo" in foo.bar())
 
 
 @dataclass
@@ -84,6 +103,7 @@ class FileAST:
     defs: List[SymbolDef] = field(default_factory=list)
     calls: List[CallSite] = field(default_factory=list)
     imports: List[ImportRef] = field(default_factory=list)
+    package: Optional[str] = None  # declared package/namespace (kotlin/java/go)
     had_error: bool = False
     parsed: bool = False  # True when tree-sitter actually ran
 
@@ -198,6 +218,16 @@ def extract_file(path: str, language: str, source: bytes) -> FileAST:
             ):
                 d.structural_kind = "method"
 
+    # --- package/namespace declaration (optional per-language query) ---
+    package_src = _load_query(lang_dir, "package")
+    if package_src:
+        query = grammars.compile_query(language, package_src, ext)
+        for _pat, caps in grammars.run_matches(query, root):
+            nodes = caps.get("name") or []
+            if nodes:
+                result.package = nodes[0].text.decode("utf-8", "replace").strip() or None
+                break
+
     # --- imports ---
     imports_src = _load_query(lang_dir, "imports")
     if imports_src:
@@ -224,11 +254,18 @@ def extract_file(path: str, language: str, source: bytes) -> FileAST:
                 continue
             node = name_nodes[0]
             enc = _enclosing(node.start_byte, result.defs)
+            qual_nodes = caps.get("qualifier") or []
+            qualifier = (
+                _normalize_qualifier(qual_nodes[0].text.decode("utf-8", "replace"))
+                if qual_nodes
+                else None
+            )
             result.calls.append(
                 CallSite(
                     callee_name=node.text.decode("utf-8", "replace"),
                     line=node.start_point[0] + 1,
                     enclosing=enc.name if enc else None,
+                    qualifier=qualifier,
                 )
             )
             if len(result.calls) >= _CALLS_CAP:
