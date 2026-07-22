@@ -12,10 +12,13 @@ serve those queries over MCP.
 It is not a vector database or full semantic index. It is a fast wayfinding
 layer plus a precise structural graph: where to start reading, which docs and
 tests matter, which files an edit impacts, and what calls what — without the
-agent grep-exploring the repo. On sample tasks this cut context from reading
-the relevant files (~35k tokens) down to the route pack (~2k): a **~7–17x
-reduction depending on the repo** — best case on a focused Python codebase,
-~7x on a large polyglot one. Measure it for your repo with `skyhook bench`.
+agent grep-exploring the repo. A route pack is a fraction of the size of reading
+the relevant files by hand (`skyhook bench` measures that ratio for your repo).
+That is an artifact-size number, though. What it buys a real coding agent,
+measured on real bugs, is more modest and more useful: roughly a quarter to a
+third less cost and about half the turns — mostly by clamping the worst-case
+exploration — without changing whether the fix is correct. The honest write-up
+is in [docs/benchmarking.md](docs/benchmarking.md).
 
 ## The Problem
 
@@ -45,6 +48,7 @@ The important artifacts are:
 - `.skyhook/areas/<area>.md`: focused notes for detected code areas
 - `.skyhook/graph.json`: diffable export of the AST symbol + call graph (committed)
 - `.skyhook/graph.db`: the SQLite graph queried by `skyhook graph` and `skyhook mcp` (regenerable; gitignored)
+- `.skyhook/mcp.json`: ready-to-use MCP registration (with `alwaysLoad`) so a coding agent can call the graph tools — see `skyhook mcp`
 
 `skyhook init` builds the map **and** the graph in one pass. `skyhook graph
 query` answers structural questions (`callers`, `callees`, `blast-radius`,
@@ -248,20 +252,32 @@ stats` breaks resolution down by stage.
 
 ### `skyhook mcp`
 
-Serve the graph as read-only MCP tools (`find_symbol`, `callers_of`,
-`callees_of`, `blast_radius`, `file_exists`, `symbols_in_file`, `search`,
-`graph_stats`) for any MCP client. Requires the `mcp` extra
-(`pip install 'skyhook[mcp]'`, Python >= 3.10).
+Serve the graph as read-only MCP tools for any MCP client. Requires the `mcp`
+extra (`pip install 'skyhook[mcp]'`, Python >= 3.10).
+
+- `route` — task → orientation pack (where to start, likely edit targets, tests,
+  call chains, blast radius). Call this **first** for a coding task, instead of
+  grepping to find where to work.
+- `find_symbol`, `search`, `symbols_in_file` — locate definitions.
+- `callers_of`, `callees_of`, `blast_radius` — trace structure and impact.
+- `file_exists`, `graph_stats` — coverage checks.
 
 ```sh
 skyhook mcp --repo .
 ```
 
-Register with a client (Claude Code, Cursor, Copilot, a pipeline):
+`skyhook init` writes a ready-to-use registration to `.skyhook/mcp.json`. Point
+your client at it (Claude Code: `claude --mcp-config .skyhook/mcp.json`):
 
 ```json
-{ "mcpServers": { "skyhook": { "command": "skyhook", "args": ["mcp", "--repo", "/abs/path/to/repo"] } } }
+{ "mcpServers": { "skyhook": { "command": "skyhook", "args": ["mcp", "--repo", "/abs/path/to/repo"], "alwaysLoad": true } } }
 ```
+
+**Keep `alwaysLoad: true`.** It is not cosmetic: without it, clients start the
+session before the stdio server finishes connecting, so Skyhook's tools never
+enter the agent's toolset — the server stays `pending` and the agent silently
+falls back to grep. With it, the client waits for the connection and every tool
+is present from the first turn.
 
 ### `skyhook bench`
 
@@ -271,6 +287,12 @@ agent would otherwise open:
 ```sh
 skyhook bench --task "fix retry handling in BillingService"
 ```
+
+This measures the *artifact* — how much smaller the pack is than the files it
+points at — and assumes the agent uses the pack instead of grep-exploring. It is
+not a measurement of what an agent actually does. For that, and for an honest
+account of what Skyhook does and does not change (efficiency and consistency, not
+correctness or a headline token multiplier), see [docs/benchmarking.md](docs/benchmarking.md).
 
 ### `skyhook check`
 

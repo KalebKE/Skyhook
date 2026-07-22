@@ -28,6 +28,14 @@ class CliTests(unittest.TestCase):
             self.assertTrue((root / ".skyhook" / "architecture.md").exists())
             self.assertTrue((root / ".skyhook" / "tests.md").exists())
             self.assertTrue(any((root / ".skyhook" / "areas").glob("*.md")))
+            # integration config for coding agents, with alwaysLoad so the tools connect in time
+            mcp_json = root / ".skyhook" / "mcp.json"
+            self.assertTrue(mcp_json.exists())
+            sk = json.loads(mcp_json.read_text())["mcpServers"]["skyhook"]
+            self.assertIs(sk["alwaysLoad"], True)
+            self.assertEqual(sk["command"], "skyhook")
+            self.assertEqual(sk["args"][:2], ["mcp", "--repo"])
+            self.assertEqual(Path(sk["args"][2]).resolve(), root.resolve())
             self.assertEqual(main(["check", "--repo", str(root)]), 0)
 
     def test_check_fails_when_map_is_stale(self):

@@ -121,8 +121,38 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 0
     write_outputs(out_dir, data)
     _build_graph_artifacts(scan, out_dir)
+    _write_integration_config(repo_root, out_dir)
     print_report("init", scan, out_dir, wrote=True)
+    print(
+        f"skyhook: wrote {out_dir}/mcp.json — register it with your coding agent so it can "
+        f"call the graph tools. Claude Code: `claude --mcp-config {out_dir}/mcp.json`. "
+        f"Keep alwaysLoad:true — without it the server connects too late and the agent "
+        f"never sees the tools (it silently falls back to grep)."
+    )
     return 0
+
+
+def _write_integration_config(repo_root: Path, out_dir: Path) -> None:
+    """Write ``.skyhook/mcp.json``: a ready-to-use MCP registration for coding agents.
+
+    ``alwaysLoad`` is REQUIRED, not cosmetic: without it, clients (e.g. Claude Code)
+    start the session before the stdio server finishes connecting, so Skyhook's tools
+    never enter the agent's toolset (the server stays ``pending`` and the agent silently
+    falls back to grep). With ``alwaysLoad`` the client waits for the connection and all
+    tools (``route`` + the graph queries) are present from the first turn.
+    """
+    import json as _json
+
+    cfg = {
+        "mcpServers": {
+            "skyhook": {
+                "command": "skyhook",
+                "args": ["mcp", "--repo", str(repo_root)],
+                "alwaysLoad": True,
+            }
+        }
+    }
+    (out_dir / "mcp.json").write_text(_json.dumps(cfg, indent=2) + "\n")
 
 
 def _build_graph_artifacts(scan, out_dir: Path, full: bool = False) -> None:
