@@ -106,6 +106,23 @@ def render_index_markdown(data: Mapping[str, Any]) -> str:
         lines.append(f"- `{item}`")
     lines.append("")
 
+    lines.extend([
+        "## How To Work Here",
+        "",
+        "Before grep-exploring this repo, ask the graph. It is a real call graph, not a guess:",
+        "",
+        "- `skyhook route --profile <profile> --task \"...\"` for a task-scoped pack "
+        "(where to start, likely edits, tests, blast radius).",
+        "- `skyhook graph query callers <Symbol>` / `callees <Symbol>` / `blast-radius <path>` "
+        "to trace structure directly.",
+        "- Or the Skyhook MCP tools (`skyhook mcp`) for the same queries live.",
+        "",
+        "Trust precise edges (same_file/qualified/imported/same_package). Grep only for edges "
+        "marked global/approximate, or when the graph returns nothing. An empty result means "
+        "verify by hand, not that nothing is there.",
+        "",
+    ])
+
     lines.extend(["## Code Areas", ""])
     areas = data.get("codeAreas", []) or []
     if areas:
@@ -286,6 +303,13 @@ def render_route_markdown(route: Mapping[str, Any]) -> str:
     _list_field(lines, "Constraints And Gotchas", route.get("constraints", []))
     _list_field(lines, "Search Terms", route.get("searchTerms", []))
     _render_call_graph(lines, route)
+    coverage = route.get("graphCoverage") or {}
+    if coverage.get("note"):
+        lines.extend(["## Graph Coverage", "", str(coverage["note"]), ""])
+        pct = coverage.get("precisionOfResolvedPct")
+        if pct is not None:
+            lines.append(f"Precision of resolved edges: ~{pct}%")
+            lines.append("")
     evidence = route.get("evidence", []) or []
     lines.extend(["## Evidence", ""])
     if evidence:

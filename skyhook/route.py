@@ -34,12 +34,30 @@ STOP_WORDS = {
 }
 
 
+# Shared, agent-facing navigation protocol appended to the profile guidance below.
+# The whole point of Skyhook is a smaller, righter context, and that only pays off if
+# the agent asks the graph before it grep-explores. These bullets encode that, and
+# keep it honest: trust the precise edges, fall back to grep for the rest.
+_GRAPH_FIRST = [
+    "Ask the graph before grep-exploring: query callers, callees, and blast-radius "
+    "(`skyhook graph query ...`, or the Skyhook MCP tools) for the symbols and files below.",
+    "Trust precise edges (same_file/qualified/imported/same_package); grep only for edges "
+    "marked global/approximate, or when the graph returns nothing. An empty result means "
+    "verify by hand, not that nothing is there.",
+]
+_GRAPH_SCOPING = [
+    "Use the graph (callers, blast-radius) to scope impact before estimating, but prefer open "
+    "questions and boundaries over edit targets.",
+]
+
+
 ROUTE_PROFILES: Dict[str, Dict[str, Any]] = {
     "product_planning": {
         "label": "Product Planning",
         "guidance": [
             "Start with product-facing docs, existing user flows, domain language, and public contracts.",
             "Prefer questions, scope boundaries, and user outcomes over edit targets.",
+            *_GRAPH_SCOPING,
         ],
         "docKinds": ["readme", "design", "api", "architecture"],
         "includeEdits": False,
@@ -51,6 +69,7 @@ ROUTE_PROFILES: Dict[str, Dict[str, Any]] = {
         "guidance": [
             "Find existing requirements, domain contracts, acceptance criteria, and testing guidance.",
             "Capture open questions before proposing implementation details.",
+            *_GRAPH_SCOPING,
         ],
         "docKinds": ["readme", "design", "api", "test", "architecture"],
         "includeEdits": False,
@@ -62,6 +81,7 @@ ROUTE_PROFILES: Dict[str, Dict[str, Any]] = {
         "guidance": [
             "Identify affected code areas, architecture boundaries, integration points, tests, and likely issue slices.",
             "Prefer dependency order and verification strategy before implementation details.",
+            *_GRAPH_FIRST,
         ],
         "docKinds": ["architecture", "adr", "design", "runbook", "test"],
         "includeEdits": True,
@@ -73,6 +93,7 @@ ROUTE_PROFILES: Dict[str, Dict[str, Any]] = {
         "guidance": [
             "Read the route pack, then inspect likely edit targets and relevant tests before changing files.",
             "Preserve architecture constraints and run the narrowest useful verification commands.",
+            *_GRAPH_FIRST,
         ],
         "docKinds": ["architecture", "adr", "design", "test", "runbook"],
         "includeEdits": True,
@@ -84,6 +105,7 @@ ROUTE_PROFILES: Dict[str, Dict[str, Any]] = {
         "guidance": [
             "Prioritize changed or named files, nearby tests, public contracts, and architecture rules.",
             "Look for behavioral regressions, missing verification, and boundary violations.",
+            *_GRAPH_FIRST,
         ],
         "docKinds": ["architecture", "adr", "test", "runbook"],
         "includeEdits": True,
@@ -95,6 +117,7 @@ ROUTE_PROFILES: Dict[str, Dict[str, Any]] = {
         "guidance": [
             "Prioritize symptoms, failing tests, logs, public contracts, and the smallest reproducible path.",
             "Use route evidence as a starting point, then verify against runtime or test failure data.",
+            *_GRAPH_FIRST,
         ],
         "docKinds": ["runbook", "test", "architecture", "api"],
         "includeEdits": True,
@@ -178,6 +201,18 @@ def build_route(
         "evidence": evidence[:30],
     }
     if graph is not None:
+        try:
+            st = graph.stats()
+            resolved = st.get("resolved_calls") or 0
+            precise = st.get("precise_calls") or 0
+            route["graphCoverage"] = {
+                "precisionOfResolvedPct": round(100 * precise / resolved, 1) if resolved else None,
+                "note": "Call edges carry confidence grades. Precise edges are reliable; the graph "
+                        "does not bind every in-repo call, so treat thin or missing callers as a "
+                        "prompt to verify, not proof there are none.",
+            }
+        except Exception:
+            pass
         enrichment = _graph_enrichment(graph, symbols, likely_edits)
         if enrichment.get("callChains"):
             route["callChains"] = enrichment["callChains"]

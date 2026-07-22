@@ -248,7 +248,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp_server import McpUnavailable, serve
 
     try:
-        serve(db_path)
+        serve(db_path, out_dir=out_dir)
     except McpUnavailable as exc:
         print(f"skyhook: {exc}", file=sys.stderr)
         return 2

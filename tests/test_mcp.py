@@ -1,4 +1,5 @@
 import asyncio
+import json
 import subprocess
 import sys
 import tempfile
@@ -46,10 +47,45 @@ class McpServerTests(unittest.TestCase):
                 self.assertIn("callers_of", tools)
                 self.assertIn("blast_radius", tools)
                 self.assertIn("file_exists", tools)
+                self.assertIn("route", tools)
                 res = await server.call_tool("callers_of", {"name": "helper"})
                 structured = res[1] if isinstance(res, tuple) else res
                 names = {c["name"] for c in structured["result"]}
                 self.assertIn("foo", names)
+
+            asyncio.run(run())
+
+    def test_route_tool_without_map_errors(self):
+        from skyhook.mcp_server import build_server
+
+        with tempfile.TemporaryDirectory() as tmp:
+            server = build_server(self._store(tmp))  # no map_data
+
+            async def run():
+                res = await server.call_tool("route", {"task": "fix the helper"})
+                content = res[0] if isinstance(res, tuple) else res
+                pack = json.loads(content[0].text)
+                self.assertIn("error", pack)
+                self.assertIn("skyhook init", pack["error"])
+
+            asyncio.run(run())
+
+    def test_route_tool_with_map_returns_pack(self):
+        from skyhook.mcp_server import build_server
+
+        with tempfile.TemporaryDirectory() as tmp:
+            map_data = {"codeAreas": [], "docs": [], "architecture": [],
+                        "symbols": [], "tests": [], "orientation": {}}
+            server = build_server(self._store(tmp), map_data=map_data)
+
+            async def run():
+                res = await server.call_tool(
+                    "route", {"task": "fix the helper", "profile": "bug_hunt"})
+                content = res[0] if isinstance(res, tuple) else res
+                pack = json.loads(content[0].text)
+                self.assertEqual(pack["task"], "fix the helper")
+                self.assertEqual(pack["profile"], "bug_hunt")
+                self.assertIn("profileGuidance", pack)
 
             asyncio.run(run())
 
