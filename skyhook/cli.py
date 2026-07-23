@@ -31,6 +31,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return cmd_mcp(args)
         if args.command == "bench":
             return cmd_bench(args)
+        if args.command == "wire":
+            return cmd_wire(args)
     except KeyboardInterrupt:
         print("skyhook: interrupted", file=sys.stderr)
         return 130
@@ -92,6 +94,13 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_args(bench, provider=False)
     bench.add_argument("--task", required=True, help="task text to route + measure")
     bench.add_argument("--profile", default="implementation")
+
+    wire = sub.add_parser("wire", help="register Skyhook with your coding agent(s) and add the query-first protocol")
+    add_common_args(wire, provider=False)
+    wire.add_argument("--agent", action="append", choices=["claude", "codex", "cursor"],
+                      help="target agent (repeatable); default: all detected")
+    wire.add_argument("--yes", action="store_true", help="apply without confirmation")
+    wire.add_argument("--dry-run", action="store_true", help="preview changes, write nothing")
     return parser
 
 
@@ -124,11 +133,57 @@ def cmd_init(args: argparse.Namespace) -> int:
     _write_integration_config(repo_root, out_dir)
     print_report("init", scan, out_dir, wrote=True)
     print(
-        f"skyhook: wrote {out_dir}/mcp.json — register it with your coding agent so it can "
-        f"call the graph tools. Claude Code: `claude --mcp-config {out_dir}/mcp.json`. "
-        f"Keep alwaysLoad:true — without it the server connects too late and the agent "
-        f"never sees the tools (it silently falls back to grep)."
+        f"skyhook: wrote {out_dir}/mcp.json. Run `skyhook wire` to register Skyhook with your "
+        f"agent (Claude Code, Codex, Cursor) and add the query-first protocol, or point your "
+        f"agent at {out_dir}/mcp.json by hand (keep alwaysLoad so the tools connect in time)."
     )
+    return 0
+
+
+def cmd_wire(args: argparse.Namespace) -> int:
+    from .wire import build_plan, detect
+
+    repo_root, _cfg, _out_dir = load_runtime(args)
+    home = Path.home()
+    agents = args.agent or detect(repo_root, home)
+    if not agents:
+        print(
+            "skyhook wire: no supported agent detected (Claude Code, Codex, Cursor). "
+            "Use --agent to force one.",
+            file=sys.stderr,
+        )
+        return 0
+
+    actions = build_plan(repo_root, agents, home=home)
+    print("skyhook wire will make these changes (project scope):")
+    for action in actions:
+        tag = "  [GLOBAL ~/.codex]" if action.global_ else ""
+        print(f"  {action.agent:7} {action.desc}{tag}")
+        print(f"          -> {action.target}")
+
+    if args.dry_run:
+        print("(dry run: nothing written)")
+        return 0
+
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print(
+                "Non-interactive shell; re-run with --yes to apply or --dry-run to preview.",
+                file=sys.stderr,
+            )
+            return 0
+        try:
+            resp = input("Proceed? [y/N] ").strip().lower()
+        except EOFError:
+            resp = ""
+        if resp not in ("y", "yes"):
+            print("aborted.")
+            return 0
+
+    for action in actions:
+        status = action.run()
+        print(f"  {action.agent:7} {action.target} [{status}]")
+    print("Done. Restart your agent session so it picks up the new config.")
     return 0
 
 

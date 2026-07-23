@@ -130,6 +130,28 @@ OPENAI_API_KEY=... skyhook init --provider openai
 
 After this, point agents at `.skyhook/INDEX.md` first. For task-specific work, use `skyhook route`.
 
+## Wire It Into Your Agent
+
+Connecting the tools is not enough on its own — the agent also has to be told to reach for
+them, in context it actually reads, or it falls back to grep. `skyhook wire` does both: it
+registers the MCP server and writes the query-first protocol into your agent's always-on
+context. It detects Claude Code, Codex, and Cursor, shows exactly what it will change, and
+asks before writing:
+
+```sh
+skyhook wire                        # detect agents, confirm, write (project scope)
+skyhook wire --dry-run              # preview only, write nothing
+skyhook wire --agent cursor --yes   # one agent, no prompt
+```
+
+Writes are idempotent (re-run to update) and never touch content outside their own markers:
+
+- **Claude Code** — `skyhook` in the repo's `.mcp.json` (with `alwaysLoad`) + a marked block in `CLAUDE.md`.
+- **Cursor** — `skyhook` in `.cursor/mcp.json` + a `.cursor/rules/skyhook.mdc` rule.
+- **Codex** — a per-repo `[mcp_servers.skyhook-<repo>]` in the global `~/.codex/config.toml` (the one global write, flagged before it happens) + a marked block in the repo's `AGENTS.md`.
+
+Restart your agent session afterward so it picks up the new config.
+
 ## Configuration
 
 Optional config lives at `.skyhook/config.yaml`.
