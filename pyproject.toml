@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skyhook-graph"
-version = "0.2.0"
+version = "0.3.0"
 description = "Lightweight agent-orientation maps and AST code graphs for code and documentation."
 readme = "README.md"
 # tree-sitter >= 0.25 (a core dependency) requires Python >= 3.10.
