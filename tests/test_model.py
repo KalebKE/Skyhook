@@ -1,10 +1,13 @@
+import io
+import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from skyhook.config import default_config
-from skyhook.model import StaticOrienter
+from skyhook.model import ModelError, StaticOrienter, chat_json, resolve_provider
 from skyhook.scanner import scan_repo
 
 
@@ -48,6 +51,48 @@ class StaticModelTests(unittest.TestCase):
                 app_area["entrypoints"].index("app/src/main/java/com/example/MainActivity.kt"),
                 app_area["entrypoints"].index("app/src/androidTest/java/com/example/MainActivityTest.kt"),
             )
+
+
+class ChatJsonTests(unittest.TestCase):
+    def test_resolve_provider_auto_without_key_is_static(self):
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(resolve_provider(default_config()), "static")
+
+    def test_resolve_provider_override_wins(self):
+        with mock.patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            self.assertEqual(resolve_provider(default_config(), "static"), "static")
+            self.assertEqual(resolve_provider(default_config()), "openai")
+
+    def test_chat_json_returns_none_for_static_provider(self):
+        with mock.patch.dict("os.environ", {}, clear=True):
+            result = chat_json(default_config(), [{"role": "user", "content": "hi"}])
+        self.assertIsNone(result)
+
+    def test_chat_json_parses_openai_response(self):
+        body = json.dumps(
+            {"choices": [{"message": {"content": json.dumps({"rules": ["a"]})}}]}
+        ).encode("utf-8")
+
+        class FakeResponse(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        with mock.patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with mock.patch("urllib.request.urlopen", return_value=FakeResponse(body)):
+                result = chat_json(default_config(), [{"role": "user", "content": "hi"}])
+        self.assertEqual(result, {"rules": ["a"]})
+
+    def test_chat_json_raises_model_error_on_http_failure(self):
+        import urllib.error
+
+        error = urllib.error.URLError("connection refused")
+        with mock.patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with mock.patch("urllib.request.urlopen", side_effect=error):
+                with self.assertRaises(ModelError):
+                    chat_json(default_config(), [{"role": "user", "content": "hi"}])
 
 
 if __name__ == "__main__":

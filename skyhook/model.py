@@ -125,15 +125,40 @@ class OpenAICompatibleOrienter(Orienter):
             raise ModelError("model response did not contain choices[0].message.content") from exc
 
 
-def choose_orienter(config: SkyhookConfig, provider_override: Optional[str] = None) -> Orienter:
+def resolve_provider(config: SkyhookConfig, provider_override: Optional[str] = None) -> str:
     provider = provider_override or config.model.provider
     if provider == "auto":
         provider = "openai" if (os.environ.get("OPENAI_API_KEY") or os.environ.get("SKYHOOK_API_KEY")) else "static"
+    return provider
+
+
+def choose_orienter(config: SkyhookConfig, provider_override: Optional[str] = None) -> Orienter:
+    provider = resolve_provider(config, provider_override)
     if provider in {"static", "none", "no-model"}:
         return StaticOrienter()
     if provider == "openai":
         return OpenAICompatibleOrienter(config)
     raise ModelError(f"unsupported model provider: {provider}")
+
+
+def chat_json(
+    config: SkyhookConfig,
+    messages: List[Mapping[str, str]],
+    provider_override: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Public JSON-mode completion helper for tools built on Skyhook.
+
+    Returns None when the resolved provider is static/none, so callers can
+    fall back to deterministic behavior. Raises ModelError on request or
+    parse failure.
+    """
+    provider = resolve_provider(config, provider_override)
+    if provider in {"static", "none", "no-model"}:
+        return None
+    if provider != "openai":
+        raise ModelError(f"unsupported model provider: {provider}")
+    orienter = OpenAICompatibleOrienter(config)
+    return parse_json_object(orienter._chat(list(messages)))
 
 
 def scan_facts(scan: RepoScan) -> Dict[str, Any]:

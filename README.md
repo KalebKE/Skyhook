@@ -200,6 +200,12 @@ Default model: `gpt-4.1-mini`.
 
 If no API key is available and provider is `auto`, Skyhook uses static mode.
 
+Tools built on Skyhook can reuse the same provider plumbing through the public
+helper `skyhook.model.chat_json(config, messages, provider_override=None)`.
+It returns a parsed JSON object, or `None` when the resolved provider is
+static so callers can fall back to deterministic behavior. Provider resolution
+is exposed as `skyhook.model.resolve_provider(config, provider_override=None)`.
+
 ## Commands
 
 ### `skyhook init`
