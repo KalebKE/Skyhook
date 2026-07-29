@@ -108,7 +108,55 @@ works out to roughly a quarter to a third cheaper on average.
 Four runs per side, Claude Code on Sonnet; consistent, not precise. The full
 methodology and caveats are in [docs/benchmarking.md](docs/benchmarking.md).
 
+## Agent Setup
+
+The setup below is built to be done by a coding agent. Paste this prompt into
+Claude Code or Codex running in the repository you want mapped, and review
+what it reports back:
+
+```text
+Set up Skyhook in this repository so agent sessions start from a task-scoped
+route pack and structural queries instead of grep-exploring.
+
+Done means: `.skyhook/INDEX.md` exists, `skyhook check` passes, `skyhook route
+--task "<a real task for this repo>"` names files that exist, and after a
+session restart the skyhook MCP tools are in the agent's toolset.
+
+Work from the README at https://github.com/KalebKE/Skyhook and `skyhook --help`:
+
+1. Install: `python3 -m pip install "skyhook-graph[mcp]"` (the MCP extra needs
+   Python >= 3.10).
+2. From the repository root, run `skyhook init --provider static`. Static mode
+   is deterministic and sends nothing to a model; only use `--provider openai`
+   if an API key is already configured and the user approves.
+3. In a monorepo, write include/exclude entries into `.skyhook/config.yaml` so
+   the scan stays focused, then rerun `skyhook init`.
+4. Run `skyhook wire --dry-run`, show the user what it would change, then run
+   `skyhook wire`. Keep `alwaysLoad: true` in the MCP entry; without it the
+   server connects after the session starts and the tools never appear.
+5. Verify with observable state, not assumptions: `skyhook check` exits 0,
+   `skyhook route --task ...` points at real files, and
+   `skyhook graph query callers <a symbol you know>` matches what the code says.
+
+Constraints: do not commit `.skyhook/` unless this repository already commits
+generated artifacts or the user asks; do not send source to a model provider
+without approval; flag any write outside the repository before making it (the
+Codex wire entry lands in the global ~/.codex/config.toml). Finish with a
+short summary of what was installed, what wire changed, and the verification
+output.
+```
+
+The prompt encodes the boundaries that matter (offline by default, review
+before wiring, verification against observable state) and leaves the execution
+to the agent. The sections below cover the same setup by hand.
+
 ## Install
+
+From PyPI (the distribution name is `skyhook-graph`; the command is `skyhook`):
+
+```sh
+python3 -m pip install "skyhook-graph[mcp]"
+```
 
 From a checkout:
 
@@ -301,7 +349,7 @@ stats` breaks resolution down by stage.
 ### `skyhook mcp`
 
 Serve the graph as read-only MCP tools for any MCP client. Requires the `mcp`
-extra (`pip install 'skyhook[mcp]'`, Python >= 3.10).
+extra (`pip install 'skyhook-graph[mcp]'`, Python >= 3.10).
 
 - `route` — task → orientation pack (where to start, likely edit targets, tests,
   call chains, blast radius). Call this **first** for a coding task, instead of
