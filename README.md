@@ -192,7 +192,7 @@ After this, point agents at `.skyhook/INDEX.md` first. For task-specific work, u
 
 Connecting the tools is not enough on its own. The agent also has to be told
 to reach for them, in context it will read, or it falls back to grep.
-`skyhook wire` does both: it registers the MCP server and writes the
+`skyhook wire` does both. It registers the MCP server and writes the
 query-first protocol into your agent's always-on context. It detects Claude
 Code, Codex, and Cursor, shows exactly what it will change, and asks before
 writing:
