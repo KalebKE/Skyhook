@@ -88,6 +88,26 @@ Upgrading from an older Skyhook: the graph schema changed — run
 
 Model usage is optional. With an OpenAI-compatible provider, Skyhook can produce better summaries. Without a key, static mode still produces deterministic output from filenames, docs, symbols, imports, tests, and repository structure.
 
+## Benchmarks
+
+Both charts come from a real ~594k-line, 24-module production monorepo.
+
+`skyhook bench` measures the artifact: a task-scoped route pack is a fraction
+of the tokens an agent would read to orient by hand.
+
+<img src="assets/skyhook-bench-reduction.svg" alt="Bar chart: on a real production monorepo, the route pack was 3.4-4.6k tokens vs 14-18k to read the relevant files, a 3.8x reduction on a bug task, 3.9x on a feature, and 5.4x on planning." width="680">
+
+What that buys a real agent is more modest. On a real, non-obvious concurrency
+bug, graded by the bug's own test, Skyhook did not change correctness; both
+conditions fixed it every run. It changed the variance. Baseline runs scattered
+from 10 to 65 turns, and with Skyhook they clustered between 13 and 18, which
+works out to roughly a quarter to a third cheaper on average.
+
+<img src="assets/skyhook-turns-variance.svg" alt="Dot plot of turns to fix per run. Without Skyhook the four runs land at 10, 11, 35 and 65 turns, average 30. With Skyhook they land at 13, 15, 16 and 18, average 16." width="680">
+
+Four runs per side, Claude Code on Sonnet; consistent, not precise. The full
+methodology and caveats are in [docs/benchmarking.md](docs/benchmarking.md).
+
 ## Install
 
 From a checkout:

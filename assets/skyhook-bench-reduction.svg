@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 484" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif">
+  <rect x="0" y="0" width="680" height="484" rx="16" fill="#16161e" />
+  <text x="24" y="30" font-size="14" font-weight="600" fill="#e8eaf0" text-anchor="start">Route pack vs reading the files</text>
+  <text x="24" y="50" font-size="11" font-weight="400" fill="#b0b4c0" text-anchor="start">Measured with skyhook bench on a real ~594k-line, 24-module production monorepo.</text>
+  <rect x="24" y="65" width="10" height="10" rx="3" fill="#2ba35c" />
+  <text x="40" y="74" font-size="11" font-weight="400" fill="#b0b4c0" text-anchor="start">Route pack</text>
+  <rect x="136" y="65" width="10" height="10" rx="3" fill="#5c6672" />
+  <text x="152" y="74" font-size="11" font-weight="400" fill="#b0b4c0" text-anchor="start">Reading the files</text>
+  <line x1="54" x2="662" y1="440.0" y2="440.0" stroke="#2a2a3a" stroke-width="1" />
+  <text x="46" y="444.0" font-size="11" font-weight="400" fill="#7e8494" text-anchor="end">0</text>
+  <line x1="54" x2="662" y1="366.0" y2="366.0" stroke="#2a2a3a" stroke-width="1" />
+  <text x="46" y="370.0" font-size="11" font-weight="400" fill="#7e8494" text-anchor="end">5k</text>
+  <line x1="54" x2="662" y1="292.0" y2="292.0" stroke="#2a2a3a" stroke-width="1" />
+  <text x="46" y="296.0" font-size="11" font-weight="400" fill="#7e8494" text-anchor="end">10k</text>
+  <line x1="54" x2="662" y1="218.0" y2="218.0" stroke="#2a2a3a" stroke-width="1" />
+  <text x="46" y="222.0" font-size="11" font-weight="400" fill="#7e8494" text-anchor="end">15k</text>
+  <line x1="54" x2="662" y1="144.0" y2="144.0" stroke="#2a2a3a" stroke-width="1" />
+  <text x="46" y="148.0" font-size="11" font-weight="400" fill="#7e8494" text-anchor="end">20k</text>
+  <text x="24" y="126" font-size="11" font-weight="400" fill="#7e8494" text-anchor="start">tokens</text>
+  <path d="M102.33333333333331,440.0 L102.33333333333331,389.4916 Q102.33333333333331,385.4916 106.33333333333331,385.4916 L144.33333333333331,385.4916 Q148.33333333333331,385.4916 148.33333333333331,389.4916 L148.33333333333331,440.0 Z" fill="#2ba35c" />
+  <text x="125.33333333333331" y="377.4916" font-size="11" font-weight="600" fill="#e8eaf0" text-anchor="middle">3.7k</text>
+  <path d="M162.33333333333331,440.0 L162.33333333333331,235.2312 Q162.33333333333331,231.2312 166.33333333333331,231.2312 L204.33333333333331,231.2312 Q208.33333333333331,231.2312 208.33333333333331,235.2312 L208.33333333333331,440.0 Z" fill="#5c6672" />
+  <text x="185.33333333333331" y="223.2312" font-size="11" font-weight="600" fill="#e8eaf0" text-anchor="middle">14.1k</text>
+  <text x="155.33333333333331" y="126" font-size="15" font-weight="700" fill="#2ba35c" text-anchor="middle">3.8×</text>
+  <text x="155.33333333333331" y="462" font-size="12.5" font-weight="400" fill="#b0b4c0" text-anchor="middle">Bug</text>
+  <path d="M304.99999999999994,440.0 L304.99999999999994,375.78679999999997 Q304.99999999999994,371.78679999999997 308.99999999999994,371.78679999999997 L346.99999999999994,371.78679999999997 Q350.99999999999994,371.78679999999997 350.99999999999994,375.78679999999997 L350.99999999999994,440.0 Z" fill="#2ba35c" />
+  <text x="327.99999999999994" y="363.78679999999997" font-size="11" font-weight="600" fill="#e8eaf0" text-anchor="middle">4.6k</text>
+  <path d="M364.99999999999994,440.0 L364.99999999999994,179.4796 Q364.99999999999994,175.4796 368.99999999999994,175.4796 L406.99999999999994,175.4796 Q410.99999999999994,175.4796 410.99999999999994,179.4796 L410.99999999999994,440.0 Z" fill="#5c6672" />
+  <text x="387.99999999999994" y="167.4796" font-size="11" font-weight="600" fill="#e8eaf0" text-anchor="middle">17.9k</text>
+  <text x="357.99999999999994" y="126" font-size="15" font-weight="700" fill="#2ba35c" text-anchor="middle">3.9×</text>
+  <text x="357.99999999999994" y="462" font-size="12.5" font-weight="400" fill="#b0b4c0" text-anchor="middle">Feature</text>
+  <path d="M507.66666666666663,440.0 L507.66666666666663,394.3016 Q507.66666666666663,390.3016 511.66666666666663,390.3016 L549.6666666666666,390.3016 Q553.6666666666666,390.3016 553.6666666666666,394.3016 L553.6666666666666,440.0 Z" fill="#2ba35c" />
+  <text x="530.6666666666666" y="382.3016" font-size="11" font-weight="600" fill="#e8eaf0" text-anchor="middle">3.4k</text>
+  <path d="M567.6666666666666,440.0 L567.6666666666666,176.26800000000003 Q567.6666666666666,172.26800000000003 571.6666666666666,172.26800000000003 L609.6666666666666,172.26800000000003 Q613.6666666666666,172.26800000000003 613.6666666666666,176.26800000000003 L613.6666666666666,440.0 Z" fill="#5c6672" />
+  <text x="590.6666666666666" y="164.26800000000003" font-size="11" font-weight="600" fill="#e8eaf0" text-anchor="middle">18.1k</text>
+  <text x="560.6666666666666" y="126" font-size="15" font-weight="700" fill="#2ba35c" text-anchor="middle">5.4×</text>
+  <text x="560.6666666666666" y="462" font-size="12.5" font-weight="400" fill="#b0b4c0" text-anchor="middle">Planning</text>
+</svg>
