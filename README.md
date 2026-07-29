@@ -10,15 +10,10 @@ coding agents, answer structural queries (callers, callees, blast radius), and
 serve those queries over MCP.
 
 It is not a vector database or full semantic index. It is a fast wayfinding
-layer plus a precise structural graph: where to start reading, which docs and
-tests matter, which files an edit impacts, and what calls what — without the
-agent grep-exploring the repo. A route pack is a fraction of the size of reading
-the relevant files by hand (`skyhook bench` measures that ratio for your repo).
-That is an artifact-size number, though. What it buys a real coding agent,
-measured on real bugs, is more modest and more useful: roughly a quarter to a
-third less cost and about half the turns — mostly by clamping the worst-case
-exploration — without changing whether the fix is correct. The honest write-up
-is in [docs/benchmarking.md](docs/benchmarking.md).
+layer backed with a structural graph. It helps agents know where to start reading, which docs and tests matter, which files an edit impacts, and what calls what. And it can do it without the
+agent grep-exploring the repo.
+
+A Skyhook route pack is a fraction of the size of reading the relevant files by hand (`skyhook bench` measures that ratio for your repo). For some tasks, Skyhook can reduce token usage by more than 25% and use about half the turns. This is achieved mostly by clamping the worst-case exploration without degrading the quality of the outputs.
 
 ## The Problem
 
@@ -31,7 +26,7 @@ Large repositories burn time and tokens before useful work starts. A new agent s
 - which files are likely edit targets for a bug, review, or implementation task
 - what local conventions are worth reading before touching code
 
-Normal search helps after you know what to search for. A full index can help too, but it is heavier than many teams need and can still bury the starting point in too much detail. Skyhook is intentionally smaller. It produces a compact map that agents can read before they open a broad set of files.
+Normal search helps after you know what to search for. A full index can help too, but it is heavier than many teams need and can still bury the starting point in too much detail. Skyhook is smaller than that. It produces a compact map that agents can read before they open a broad set of files.
 
 ## How Skyhook Solves It
 
@@ -48,7 +43,7 @@ The important artifacts are:
 - `.skyhook/areas/<area>.md`: focused notes for detected code areas
 - `.skyhook/graph.json`: diffable export of the AST symbol + call graph (committed)
 - `.skyhook/graph.db`: the SQLite graph queried by `skyhook graph` and `skyhook mcp` (regenerable; gitignored)
-- `.skyhook/mcp.json`: ready-to-use MCP registration (with `alwaysLoad`) so a coding agent can call the graph tools — see `skyhook mcp`
+- `.skyhook/mcp.json`: ready-to-use MCP registration (with `alwaysLoad`) so a coding agent can call the graph tools (see `skyhook mcp`)
 
 `skyhook init` builds the map **and** the graph in one pass. `skyhook graph
 query` answers structural questions (`callers`, `callees`, `blast-radius`,
@@ -70,21 +65,17 @@ The route pack is the part an agent should read for a specific job. The map is t
 
 Skyhook favors generated files over a service because agents and humans can inspect the output, commit it if they want, diff it in review, and use it on local machines or CI runners without extra infrastructure.
 
-The map is navigational by design — good enough to point to the right code and
-docs quickly. The **AST graph** underneath it adds the precise layer: real
-symbols (functions, classes, methods with scope), imports, member calls with
-their receivers, and package declarations, parsed with tree-sitter (Python,
-Swift, Kotlin, Java, JavaScript, TypeScript, Go, Elixir). Calls resolve through
-a staged ladder — same file, qualifier (`Foo.bar()` → `bar` inside `Foo`),
-imports, same package, then a repo-wide name match as the last resort — and
-every edge carries its `resolution` grade, so consumers can tell a
+The map is navigational, good enough to point to the right code and docs
+quickly. The **AST graph** underneath it adds the precise layer: real symbols
+(functions, classes, methods with scope), imports, member calls with their
+receivers, and package declarations, parsed with tree-sitter (Python, Swift,
+Kotlin, Java, JavaScript, TypeScript, Go, Elixir). Calls resolve through a
+staged ladder (same file, qualifier (`Foo.bar()` resolves to `bar` inside
+`Foo`), imports, same package, then a repo-wide name match as the last resort)
+and every edge carries its `resolution` grade, so consumers can tell a
 scope-resolved binding from a heuristic guess instead of treating everything as
 approximate. The graph is what lets `skyhook route` embed call chains and blast
-radius so agents stop guessing.
-
-Upgrading from an older Skyhook: the graph schema changed — run
-`skyhook graph build` once per repo to regenerate `graph.db`/`graph.json`
-(kotlin member calls need `tree-sitter-kotlin>=1.1`).
+radius so agents stop guessing about what a change touches.
 
 Model usage is optional. With an OpenAI-compatible provider, Skyhook can produce better summaries. Without a key, static mode still produces deterministic output from filenames, docs, symbols, imports, tests, and repository structure.
 
@@ -105,50 +96,49 @@ works out to roughly a quarter to a third cheaper on average.
 
 <img src="assets/skyhook-turns-variance.svg" alt="Dot plot of turns to fix per run. Without Skyhook the four runs land at 10, 11, 35 and 65 turns, average 30. With Skyhook they land at 13, 15, 16 and 18, average 16." width="680">
 
-Four runs per side, Claude Code on Sonnet; consistent, not precise. The full
-methodology and caveats are in [docs/benchmarking.md](docs/benchmarking.md).
+Four runs per side, Claude Code on Sonnet, so treat it as consistent rather
+than precise. The full methodology and caveats are in
+[docs/benchmarking.md](docs/benchmarking.md).
 
 ## Agent Setup
 
-The setup below is built to be done by a coding agent. Paste this prompt into
-Claude Code or Codex running in the repository you want mapped, and review
+This setup is meant to be done by a coding agent. Paste this prompt into
+Claude Code or Codex running in the repository you want mapped and review
 what it reports back:
 
 ```text
 Set up Skyhook in this repository so agent sessions start from a task-scoped
-route pack and structural queries instead of grep-exploring.
+route pack and structural queries instead of grep-exploring the repo.
 
-Done means: `.skyhook/INDEX.md` exists, `skyhook check` passes, `skyhook route
---task "<a real task for this repo>"` names files that exist, and after a
-session restart the skyhook MCP tools are in the agent's toolset.
+Done means `.skyhook/INDEX.md` exists, `skyhook check` passes, `skyhook route
+--task "<a real task for this repo>"` names files that exist, and the skyhook
+MCP tools show up in the agent's toolset after a session restart.
 
 Work from the README at https://github.com/KalebKE/Skyhook and `skyhook --help`:
 
-1. Install: `python3 -m pip install "skyhook-graph[mcp]"` (the MCP extra needs
-   Python >= 3.10).
-2. From the repository root, run `skyhook init --provider static`. Static mode
-   is deterministic and sends nothing to a model; only use `--provider openai`
+1. Install it: `python3 -m pip install "skyhook-graph[mcp]"` (the MCP extra
+   needs Python >= 3.10).
+2. Run `skyhook init --provider static` from the repository root. Static mode
+   is deterministic and sends nothing to a model. Only use `--provider openai`
    if an API key is already configured and the user approves.
-3. In a monorepo, write include/exclude entries into `.skyhook/config.yaml` so
-   the scan stays focused, then rerun `skyhook init`.
+3. In a monorepo, add include/exclude entries to `.skyhook/config.yaml` so the
+   scan stays focused, then rerun `skyhook init`.
 4. Run `skyhook wire --dry-run`, show the user what it would change, then run
-   `skyhook wire`. Keep `alwaysLoad: true` in the MCP entry; without it the
+   `skyhook wire`. Keep `alwaysLoad: true` in the MCP entry. Without it the
    server connects after the session starts and the tools never appear.
-5. Verify with observable state, not assumptions: `skyhook check` exits 0,
-   `skyhook route --task ...` points at real files, and
-   `skyhook graph query callers <a symbol you know>` matches what the code says.
+5. Verify with observable state: `skyhook check` exits 0, `skyhook route`
+   points at real files, and `skyhook graph query callers <a symbol you know>`
+   matches what the code says.
 
-Constraints: do not commit `.skyhook/` unless this repository already commits
-generated artifacts or the user asks; do not send source to a model provider
-without approval; flag any write outside the repository before making it (the
-Codex wire entry lands in the global ~/.codex/config.toml). Finish with a
-short summary of what was installed, what wire changed, and the verification
-output.
+Constraints: do not commit `.skyhook/` unless the repository already commits
+generated artifacts or the user asks for it. Do not send source to a model
+provider without approval. Flag any write outside the repository before making
+it (the Codex wire entry lands in the global ~/.codex/config.toml). Finish
+with a short summary of what was installed, what wire changed, and the
+verification output.
 ```
 
-The prompt encodes the boundaries that matter (offline by default, review
-before wiring, verification against observable state) and leaves the execution
-to the agent. The sections below cover the same setup by hand.
+The sections below cover the same setup by hand.
 
 ## Install
 
@@ -200,11 +190,12 @@ After this, point agents at `.skyhook/INDEX.md` first. For task-specific work, u
 
 ## Wire It Into Your Agent
 
-Connecting the tools is not enough on its own — the agent also has to be told to reach for
-them, in context it actually reads, or it falls back to grep. `skyhook wire` does both: it
-registers the MCP server and writes the query-first protocol into your agent's always-on
-context. It detects Claude Code, Codex, and Cursor, shows exactly what it will change, and
-asks before writing:
+Connecting the tools is not enough on its own. The agent also has to be told
+to reach for them, in context it will read, or it falls back to grep.
+`skyhook wire` does both: it registers the MCP server and writes the
+query-first protocol into your agent's always-on context. It detects Claude
+Code, Codex, and Cursor, shows exactly what it will change, and asks before
+writing:
 
 ```sh
 skyhook wire                        # detect agents, confirm, write (project scope)
@@ -214,9 +205,9 @@ skyhook wire --agent cursor --yes   # one agent, no prompt
 
 Writes are idempotent (re-run to update) and never touch content outside their own markers:
 
-- **Claude Code** — `skyhook` in the repo's `.mcp.json` (with `alwaysLoad`) + a marked block in `CLAUDE.md`.
-- **Cursor** — `skyhook` in `.cursor/mcp.json` + a `.cursor/rules/skyhook.mdc` rule.
-- **Codex** — a per-repo `[mcp_servers.skyhook-<repo>]` in the global `~/.codex/config.toml` (the one global write, flagged before it happens) + a marked block in the repo's `AGENTS.md`.
+- **Claude Code**: `skyhook` in the repo's `.mcp.json` (with `alwaysLoad`) + a marked block in `CLAUDE.md`.
+- **Cursor**: `skyhook` in `.cursor/mcp.json` + a `.cursor/rules/skyhook.mdc` rule.
+- **Codex**: a per-repo `[mcp_servers.skyhook-<repo>]` in the global `~/.codex/config.toml` (the one global write, flagged before it happens) + a marked block in the repo's `AGENTS.md`.
 
 Restart your agent session afterward so it picks up the new config.
 
@@ -250,7 +241,7 @@ docs:
     - "**/*C4*.md"
 ```
 
-The YAML parser intentionally supports a small subset. Skyhook does not require PyYAML.
+The YAML parser supports a small subset. Skyhook does not require PyYAML.
 
 Use `include` to keep the scan focused in monorepos. Use `exclude` for generated output, dependency directories, build artifacts, and large local worktrees.
 
@@ -258,13 +249,13 @@ Use `include` to keep the scan focused in monorepos. Use `exclude` for generated
 
 Skyhook supports an OpenAI-compatible chat completions endpoint through the Python standard library.
 
-Environment variables:
+Skyhook reads these environment variables:
 
 - `OPENAI_API_KEY` or `SKYHOOK_API_KEY`
 - `OPENAI_BASE_URL` or `SKYHOOK_BASE_URL`
 - `SKYHOOK_MODEL`
 
-Default model: `gpt-4.1-mini`.
+The default model is `gpt-4.1-mini`.
 
 If no API key is available and provider is `auto`, Skyhook uses static mode.
 
@@ -351,12 +342,12 @@ stats` breaks resolution down by stage.
 Serve the graph as read-only MCP tools for any MCP client. Requires the `mcp`
 extra (`pip install 'skyhook-graph[mcp]'`, Python >= 3.10).
 
-- `route` — task → orientation pack (where to start, likely edit targets, tests,
-  call chains, blast radius). Call this **first** for a coding task, instead of
-  grepping to find where to work.
-- `find_symbol`, `search`, `symbols_in_file` — locate definitions.
-- `callers_of`, `callees_of`, `blast_radius` — trace structure and impact.
-- `file_exists`, `graph_stats` — coverage checks.
+- `route`: turns a task into an orientation pack (where to start, likely edit
+  targets, tests, call chains, blast radius). Call this **first** for a coding
+  task, instead of grepping to find where to work.
+- `find_symbol`, `search`, `symbols_in_file`: locate definitions.
+- `callers_of`, `callees_of`, `blast_radius`: trace structure and impact.
+- `file_exists`, `graph_stats`: coverage checks.
 
 ```sh
 skyhook mcp --repo .
@@ -371,7 +362,7 @@ your client at it (Claude Code: `claude --mcp-config .skyhook/mcp.json`):
 
 **Keep `alwaysLoad: true`.** It is not cosmetic: without it, clients start the
 session before the stdio server finishes connecting, so Skyhook's tools never
-enter the agent's toolset — the server stays `pending` and the agent silently
+enter the agent's toolset. The server stays `pending` and the agent silently
 falls back to grep. With it, the client waits for the connection and every tool
 is present from the first turn.
 
@@ -384,11 +375,11 @@ agent would otherwise open:
 skyhook bench --task "fix retry handling in BillingService"
 ```
 
-This measures the *artifact* — how much smaller the pack is than the files it
-points at — and assumes the agent uses the pack instead of grep-exploring. It is
-not a measurement of what an agent actually does. For that, and for an honest
-account of what Skyhook does and does not change (efficiency and consistency, not
-correctness or a headline token multiplier), see [docs/benchmarking.md](docs/benchmarking.md).
+This measures the *artifact* (how much smaller the pack is than the files it
+points at) and assumes the agent uses the pack instead of grep-exploring. It is
+not a measurement of agent behavior. For that, and for what Skyhook does and
+does not change (efficiency and consistency, not correctness or a headline
+token multiplier), see [docs/benchmarking.md](docs/benchmarking.md).
 
 ### `skyhook check`
 
@@ -437,14 +428,6 @@ jobs:
       - run: python3 -m pip install "git+https://github.com/KalebKE/Skyhook.git"
       - run: skyhook check
 ```
-
-## Relationship To BurnPlan
-
-Skyhook answers: where should an agent start reading for this repo or task?
-
-BurnPlan answers: what does the project want to become, what weak points are emerging, and how should agent teams use the map over time?
-
-Use Skyhook by itself when you only need wayfinding. Add BurnPlan when you want onboarding interviews, code health notes, documentation proposals, and team routing.
 
 ## Development
 
