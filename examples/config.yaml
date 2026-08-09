@@ -3,6 +3,8 @@ outputDir: .skyhook
 model:
   provider: auto
   model: auto
+  timeoutSeconds: 90
+  maxPromptBytes: 96000
 scan:
   include:
     - .
