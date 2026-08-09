@@ -18,6 +18,8 @@ outputDir: out
 model:
   provider: static
   model: test-model
+  timeoutSeconds: 180
+  maxPromptBytes: 64000
 scan:
   include:
     - src
@@ -37,6 +39,8 @@ docs:
             self.assertEqual(cfg.output_dir, "out")
             self.assertEqual(cfg.model.provider, "static")
             self.assertEqual(cfg.model.model, "test-model")
+            self.assertEqual(cfg.model.timeout_seconds, 180)
+            self.assertEqual(cfg.model.max_prompt_bytes, 64000)
             self.assertEqual(cfg.scan.include, ["src"])
             self.assertEqual(cfg.scan.exclude, ["build", "node_modules"])
             self.assertEqual(cfg.scan.max_files, 42)

@@ -221,6 +221,8 @@ outputDir: .skyhook
 model:
   provider: auto
   model: auto
+  timeoutSeconds: 90
+  maxPromptBytes: 96000
 scan:
   include:
     - .
@@ -254,8 +256,15 @@ Skyhook reads these environment variables:
 - `OPENAI_API_KEY` or `SKYHOOK_API_KEY`
 - `OPENAI_BASE_URL` or `SKYHOOK_BASE_URL`
 - `SKYHOOK_MODEL`
+- `SKYHOOK_TIMEOUT_SECONDS`
+- `SKYHOOK_MAX_PROMPT_BYTES`
 
 The default model is `gpt-4.1-mini`.
+
+Model-backed map generation keeps each request below `maxPromptBytes` by
+analyzing large scans in stable path-ordered chunks and reducing the partial
+results into one map. The 96,000-byte default is safe for 128k-context models;
+lower it for an OpenAI-compatible model with a smaller context window.
 
 If no API key is available and provider is `auto`, Skyhook uses static mode.
 

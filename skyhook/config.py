@@ -51,6 +51,8 @@ class ModelConfig:
     provider: str = "auto"
     model: str = "auto"
     base_url: Optional[str] = None
+    timeout_seconds: int = 90
+    max_prompt_bytes: int = 96000
 
 
 @dataclass
@@ -99,6 +101,12 @@ def load_config(repo_root: Path, config_path: Optional[str] = None) -> SkyhookCo
         cfg.model.model = str(model.get("model", cfg.model.model))
         if model.get("baseUrl") or model.get("base_url"):
             cfg.model.base_url = str(model.get("baseUrl") or model.get("base_url"))
+        cfg.model.timeout_seconds = int(
+            model.get("timeoutSeconds", model.get("timeout_seconds", cfg.model.timeout_seconds))
+        )
+        cfg.model.max_prompt_bytes = int(
+            model.get("maxPromptBytes", model.get("max_prompt_bytes", cfg.model.max_prompt_bytes))
+        )
     scan = data.get("scan", {})
     if isinstance(scan, dict):
         cfg.scan.include = _string_list(scan.get("include"), cfg.scan.include)
