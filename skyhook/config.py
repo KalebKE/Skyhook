@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 
 DEFAULT_EXCLUDES = [
+    ".burnplan",
     ".skyhook",
     ".git",
     ".gradle",

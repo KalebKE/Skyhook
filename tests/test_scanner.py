@@ -18,6 +18,8 @@ class ScannerTests(unittest.TestCase):
             (root / "src" / "app.py").write_text("def main(): pass\n", encoding="utf-8")
             (root / "node_modules").mkdir()
             (root / "node_modules" / "ignored.js").write_text("ignored\n", encoding="utf-8")
+            (root / ".burnplan").mkdir()
+            (root / ".burnplan" / "worklog.md").write_text("Generated worklog\n", encoding="utf-8")
 
             scan = scan_repo(root, default_config())
 
@@ -26,6 +28,7 @@ class ScannerTests(unittest.TestCase):
             self.assertIn("pyproject.toml", paths)
             self.assertIn("src/app.py", paths)
             self.assertNotIn("node_modules/ignored.js", paths)
+            self.assertNotIn(".burnplan/worklog.md", paths)
             self.assertIn("Python", scan.language_counts)
             self.assertIn("Python", scan.frameworks)
             self.assertTrue(scan.digest)
