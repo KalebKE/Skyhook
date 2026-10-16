@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import warnings
+from functools import lru_cache
 from typing import Callable, Dict, List, Optional, Tuple
 
 try:  # tree-sitter is a core dependency (>= 0.25); guard so import errors are friendly.
@@ -158,13 +159,19 @@ def compile_query(language: str, source: str, ext: str = "") -> Optional[object]
     if lang is None:
         return None
     try:
-        return _Query(lang, source)
+        return _compile_query_cached(lang, source)
     except Exception as exc:
         _warn_once(
             f"query:{language}:{hash(source)}",
             f"invalid tree-sitter query for {language}: {exc}",
         )
         return None
+
+
+@lru_cache(maxsize=128)
+def _compile_query_cached(lang: object, source: str) -> object:
+    # Query compilation is expensive; the same language queries run for every source file.
+    return _Query(lang, source)
 
 
 def run_matches(query: object, node: object):
