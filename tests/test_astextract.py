@@ -9,6 +9,18 @@ def _has(lang):
 
 
 @unittest.skipUnless(_has("Python"), "python grammar not installed")
+class GrammarQueryCacheTests(unittest.TestCase):
+    def test_reuses_compiled_query_for_same_language_and_source(self):
+        first = grammars.compile_query("Python", "(module) @root")
+        repeated = grammars.compile_query("Python", "(module) @root")
+        different = grammars.compile_query("Python", "(module) @file")
+
+        self.assertIsNotNone(first)
+        self.assertIs(first, repeated)
+        self.assertIsNot(first, different)
+
+
+@unittest.skipUnless(_has("Python"), "python grammar not installed")
 class AstExtractPythonTests(unittest.TestCase):
     SRC = b"import os\nfrom a.b import c\ndef foo(x):\n    return bar(x)\nclass A:\n    def run(self):\n        return foo(1)\n"
 
